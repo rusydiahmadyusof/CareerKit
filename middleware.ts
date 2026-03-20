@@ -65,7 +65,10 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   } catch {
-    // If Supabase fails (e.g. network), continue without auth redirect
+    // Fail closed for protected pages: if we can't verify auth, do not serve protected content.
+    if (isOnboarding(request.nextUrl.pathname) || isProtected(request.nextUrl.pathname)) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
   }
 
   return response;

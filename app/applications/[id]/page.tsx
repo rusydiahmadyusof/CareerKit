@@ -36,6 +36,7 @@ export default async function ApplicationDetailPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
   if (user && resumeIdParam?.trim()) {
     const resumeId = resumeIdParam.trim();
     const { data: resume } = await supabase
@@ -60,8 +61,17 @@ export default async function ApplicationDetailPage({
     { data: application },
     { data: resumes },
   ] = await Promise.all([
-    supabase.from("applications").select("*").eq("id", id).single(),
-    supabase.from("resumes").select("id, name").order("updated_at", { ascending: false }),
+    supabase
+      .from("applications")
+      .select("*")
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .single(),
+    supabase
+      .from("resumes")
+      .select("id, name")
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false }),
   ]);
 
   if (!application) notFound();

@@ -9,7 +9,6 @@ import {
   regenerateProfessionalSummaryAction,
   regenerateSkillsAction,
   getATSScoreForResume,
-  updateResumeAtsScore,
   updateResumeInitialJob,
 } from "@/lib/actions/resumes";
 import type { Resume, ResumeContent } from "@/lib/types/database";
@@ -71,7 +70,6 @@ export function ResumeEditor({
           feedback: out.feedback,
           ...(out.aspects && { aspects: out.aspects }),
         });
-        updateResumeAtsScore(resume.id, out.score);
       }
     });
   }, [resume.id, resume.initial_job_title, resume.initial_job_description]);
@@ -89,7 +87,6 @@ export function ResumeEditor({
           feedback: out.feedback,
           ...(out.aspects && { aspects: out.aspects }),
         });
-        updateResumeAtsScore(resume.id, out.score);
       }
     });
   }, [resume.id, resume.initial_job_title, resume.initial_job_description]);
@@ -111,7 +108,6 @@ export function ResumeEditor({
       feedback: out.feedback,
       ...(out.aspects && { aspects: out.aspects }),
     });
-    updateResumeAtsScore(resume.id, out.score);
     await updateResumeInitialJob(resume.id, role, desc);
     router.refresh();
   }, [resume.id, atsJobRole, atsJobDesc, router]);

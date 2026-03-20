@@ -71,6 +71,12 @@ export interface Resume {
   initial_job_description?: string | null;
   /** Last ATS score (0–100) for list card circle chart */
   last_ats_score?: number | null;
+  /** SHA256 hash of `(jobRole + jobDescription)` used to cache last ATS feedback. */
+  last_ats_job_hash?: string | null;
+  /** Cached ATS feedback text for the last job-context hash. */
+  last_ats_feedback?: string | null;
+  /** Cached aspect scores (0–100) for the last job-context hash. */
+  last_ats_aspects?: { keywords: number; experience: number; skills: number } | null;
   created_at: string;
   updated_at: string;
 }

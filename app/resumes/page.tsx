@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import type { Resume } from "@/lib/types/database";
 import { formatShortDate } from "@/lib/format-date";
 import { ErrorBanner } from "@/components/error-banner";
@@ -61,9 +62,16 @@ function ATSScoreCircle({ score }: { score: number }) {
 
 export default async function ResumesPage() {
   const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
   const { data: resumes, error } = await supabase
     .from("resumes")
     .select("id, name, updated_at, last_ats_score")
+    .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 
   // If last_ats_score column doesn't exist yet (migration not run), re-fetch without it so the page loads
@@ -72,6 +80,7 @@ export default async function ResumesPage() {
     ? await supabase
         .from("resumes")
         .select("id, name, updated_at")
+        .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
     : { data: null, error: null };
   const resolvedResumes = needsFallback ? fallbackResumes : resumes;

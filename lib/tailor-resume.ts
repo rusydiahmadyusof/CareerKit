@@ -9,6 +9,64 @@ const resumeContentSchema = `{
   "skills": [{ "name": string, "category": string }]
 }`;
 
+type AiFailureStage =
+  | "generateResumeContentFromJob"
+  | "computeATSScore"
+  | "refineResumeContentWithATSFeedback"
+  | "generateProfessionalSummary"
+  | "generateProfessionalSummaryFromProfile"
+  | "generateSkillsFromProfile"
+  | "generateSkillsFromContent";
+
+type AiFailureReason = "api_key_missing" | "api_call_failed" | "invalid_output";
+
+function getAiProviderLabel(): "groq" | "openai" | "none" {
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  if (groqKey) return "groq";
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  if (openaiKey) return "openai";
+  return "none";
+}
+
+function logAiStageFailure(
+  stage: AiFailureStage,
+  reason: AiFailureReason,
+  meta?: Record<string, unknown>
+) {
+  // Structured, user-safe logs: no prompt/content and no secrets.
+  console.error(
+    JSON.stringify({
+      event: "careerkit_ai_stage_failure",
+      stage,
+      reason,
+      provider: getAiProviderLabel(),
+      ...(meta ? { meta } : {}),
+    })
+  );
+}
+
+export function getAiUserSafeError(stage: AiFailureStage): string {
+  // Keep these messages user-safe and actionable (no stack traces / no internals).
+  switch (stage) {
+    case "computeATSScore":
+      return "Could not compute score. Check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    case "refineResumeContentWithATSFeedback":
+      return "Could not refine resume with ATS feedback. Check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    case "generateProfessionalSummary":
+      return "Could not generate summary. Check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    case "generateProfessionalSummaryFromProfile":
+      return "Could not generate summary. Add experience first and check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    case "generateSkillsFromProfile":
+      return "Could not generate skills. Add experience first and check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    case "generateSkillsFromContent":
+      return "Could not generate skills. Check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    case "generateResumeContentFromJob":
+      return "Could not generate resume content. Check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+    default:
+      return "AI request failed. Check API keys (GROQ_API_KEY or OPENAI_API_KEY).";
+  }
+}
+
 /** Parses raw JSON string from LLM into ResumeContent. Returns null if invalid. */
 function parseResumeContentFromRaw(raw: string): ResumeContent | null {
   try {
@@ -96,6 +154,11 @@ export async function generateResumeContentFromJob(
     client = new OpenAI({ apiKey: openaiKey });
     model = "gpt-4o-mini";
   } else {
+    logAiStageFailure("generateResumeContentFromJob", "api_key_missing", {
+      jobTitleLen: jobTitle.length,
+      jobDescriptionLen: jobDescription.length,
+      hasBaseContent: !!baseContent,
+    });
     return null;
   }
 
@@ -127,8 +190,23 @@ Respond with only the JSON object, no markdown or explanation.`;
     const raw = completion.choices[0]?.message?.content?.trim();
     if (!raw) return null;
 
-    return parseResumeContentFromRaw(raw);
-  } catch {
+    const parsed = parseResumeContentFromRaw(raw);
+    if (!parsed) {
+      logAiStageFailure("generateResumeContentFromJob", "invalid_output", {
+        jobTitleLen: jobTitle.length,
+        jobDescriptionLen: jobDescription.length,
+        hasBaseContent: !!baseContent,
+      });
+    }
+
+    return parsed;
+  } catch (err) {
+    logAiStageFailure("generateResumeContentFromJob", "api_call_failed", {
+      jobTitleLen: jobTitle.length,
+      jobDescriptionLen: jobDescription.length,
+      hasBaseContent: !!baseContent,
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
     return null;
   }
 }
@@ -158,7 +236,12 @@ export async function generateProfessionalSummary(
   jobContext?: { jobTitle?: string; jobDescription?: string }
 ): Promise<string | null> {
   const ctx = getLLMClient();
-  if (!ctx) return null;
+  if (!ctx) {
+    logAiStageFailure("generateProfessionalSummary", "api_key_missing", {
+      hasJobContext: Boolean(jobContext?.jobTitle || jobContext?.jobDescription),
+    });
+    return null;
+  }
 
   const jobPart =
     jobContext?.jobTitle || jobContext?.jobDescription
@@ -170,8 +253,9 @@ Rules: 2 to 3 sentences maximum. Base everything on the person's experience and 
 
   const userPrompt = `Resume content:\n${JSON.stringify(content)}${jobPart}\n\nWrite a short professional summary (2–3 sentences).`;
 
+  let completion: any;
   try {
-    const completion = await ctx.client.chat.completions.create({
+    completion = await ctx.client.chat.completions.create({
       model: ctx.model,
       messages: [
         { role: "system", content: systemPrompt },
@@ -179,8 +263,18 @@ Rules: 2 to 3 sentences maximum. Base everything on the person's experience and 
       ],
     });
     const raw = completion.choices[0]?.message?.content?.trim();
-    return raw && raw.length > 0 ? raw : null;
-  } catch {
+    if (!raw || raw.length === 0) {
+      logAiStageFailure("generateProfessionalSummary", "invalid_output", {
+        hasJobContext: Boolean(jobContext?.jobTitle || jobContext?.jobDescription),
+      });
+      return null;
+    }
+    return raw;
+  } catch (err) {
+    logAiStageFailure("generateProfessionalSummary", "api_call_failed", {
+      hasJobContext: Boolean(jobContext?.jobTitle || jobContext?.jobDescription),
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
     return null;
   }
 }
@@ -193,7 +287,12 @@ export async function generateProfessionalSummaryFromProfile(
   profile: Pick<Profile, "experience" | "education" | "skills">
 ): Promise<string | null> {
   const ctx = getLLMClient();
-  if (!ctx) return null;
+  if (!ctx) {
+    logAiStageFailure("generateProfessionalSummaryFromProfile", "api_key_missing", {
+      experienceCount: Array.isArray(profile.experience) ? profile.experience.length : 0,
+    });
+    return null;
+  }
 
   const experience = Array.isArray(profile.experience) ? profile.experience : [];
   const hasExperience = experience.some(
@@ -219,8 +318,9 @@ Rules: 2 to 3 sentences maximum. Base everything on the person's experience and 
 
   const userPrompt = `Profile (experience is listed with most recent first; "current": true means they still work there):\n${JSON.stringify(contentForPrompt)}\n\nWrite a short professional summary (2–3 sentences). Prioritize current and most recent role.`;
 
+  let completion: any;
   try {
-    const completion = await ctx.client.chat.completions.create({
+    completion = await ctx.client.chat.completions.create({
       model: ctx.model,
       messages: [
         { role: "system", content: systemPrompt },
@@ -228,8 +328,18 @@ Rules: 2 to 3 sentences maximum. Base everything on the person's experience and 
       ],
     });
     const raw = completion.choices[0]?.message?.content?.trim();
-    return raw && raw.length > 0 ? raw : null;
-  } catch {
+    if (!raw || raw.length === 0) {
+      logAiStageFailure("generateProfessionalSummaryFromProfile", "invalid_output", {
+        experienceCount: experience.length,
+      });
+      return null;
+    }
+    return raw;
+  } catch (err) {
+    logAiStageFailure("generateProfessionalSummaryFromProfile", "api_call_failed", {
+      experienceCount: experience.length,
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
     return null;
   }
 }
@@ -242,7 +352,12 @@ export async function generateSkillsFromProfile(
   profile: Pick<Profile, "experience" | "education" | "skills">
 ): Promise<SkillEntry[] | null> {
   const ctx = getLLMClient();
-  if (!ctx) return null;
+  if (!ctx) {
+    logAiStageFailure("generateSkillsFromProfile", "api_key_missing", {
+      experienceCount: Array.isArray(profile.experience) ? profile.experience.length : 0,
+    });
+    return null;
+  }
 
   const experience = Array.isArray(profile.experience) ? profile.experience : [];
   const hasExperience = experience.some(
@@ -271,8 +386,9 @@ CRITICAL - ONLY include measurable, concrete, professional skills that can be ve
 
   const userPrompt = `Profile (experience is listed with most recent first; "current": true means they still work there):\n${JSON.stringify(contentForPrompt)}\n\nOutput JSON: { "skills": [ { "name": "...", "category": "..." }, ... ] } with 5–8 measurable professional skills only (no soft skills). Prioritize skills from current and most recent role.`;
 
+  let completion: any;
   try {
-    const completion = await ctx.client.chat.completions.create({
+    completion = await ctx.client.chat.completions.create({
       model: ctx.model,
       messages: [
         { role: "system", content: systemPrompt },
@@ -280,23 +396,54 @@ CRITICAL - ONLY include measurable, concrete, professional skills that can be ve
       ],
       response_format: { type: "json_object" },
     });
-    const raw = completion.choices[0]?.message?.content?.trim();
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const list = Array.isArray(parsed.skills) ? parsed.skills : Array.isArray(parsed) ? parsed : null;
-    if (!list) return null;
-    const skills: SkillEntry[] = list
-      .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null)
-      .map((s) => ({
-        name: typeof s.name === "string" ? s.name : "",
-        category: typeof s.category === "string" ? s.category : "",
-      }))
-      .filter((s) => s.name.trim() !== "")
-      .filter((s) => !isSoftSkill(s.name ?? ""));
-    return skills.length > 0 ? skills : null;
-  } catch {
+  } catch (err) {
+    logAiStageFailure("generateSkillsFromProfile", "api_call_failed", {
+      experienceCount: experience.length,
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
     return null;
   }
+
+  const raw = completion.choices[0]?.message?.content?.trim();
+  if (!raw) {
+    logAiStageFailure("generateSkillsFromProfile", "invalid_output", {
+      experienceCount: experience.length,
+    });
+    return null;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    logAiStageFailure("generateSkillsFromProfile", "invalid_output", {
+      experienceCount: experience.length,
+    });
+    return null;
+  }
+
+  const list =
+    Array.isArray((parsed as any).skills)
+      ? (parsed as any).skills
+      : Array.isArray(parsed)
+        ? parsed
+        : null;
+  if (!list) {
+    logAiStageFailure("generateSkillsFromProfile", "invalid_output", {
+      experienceCount: experience.length,
+    });
+    return null;
+  }
+
+  const skills: SkillEntry[] = list
+    .filter((s: unknown): s is Record<string, unknown> => typeof s === "object" && s !== null)
+    .map((s: Record<string, unknown>) => ({
+      name: typeof s.name === "string" ? s.name : "",
+      category: typeof s.category === "string" ? s.category : "",
+    }))
+    .filter((s: { name: string; category: string }) => s.name.trim() !== "")
+    .filter((s: { name: string; category: string }) => !isSoftSkill(s.name ?? ""));
+  return skills.length > 0 ? skills : null;
 }
 
 type SkillEntry = { name?: string; category?: string };
@@ -405,7 +552,15 @@ export async function computeATSScore(
   jobDescription: string
 ): Promise<ATSScoreResult | null> {
   const ctx = getLLMClient();
-  if (!ctx) return null;
+  if (!ctx) {
+    logAiStageFailure("computeATSScore", "api_key_missing", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+      experienceCount: resumeContent.experience?.length ?? 0,
+      skillsCount: resumeContent.skills?.length ?? 0,
+    });
+    return null;
+  }
 
   const systemPrompt = `You act as an ATS (Applicant Tracking System) evaluator. Compare the resume to the job description and output a JSON object with these keys:
 - "score": number 0–100 (overall match).
@@ -420,8 +575,9 @@ Output only valid JSON, no markdown. Example: {"score": 72, "feedback": "Add mor
   const jobDescTrimmed = jobDescription.slice(0, 4000);
   const userPrompt = `Job role: ${jobRole}\n\nJob description:\n${jobDescTrimmed}\n\nResume content (JSON):\n${JSON.stringify(resumeContent)}\n\nOutput JSON with "score", "feedback", and "aspects" (object with keywords, experience, skills as numbers 0-100).`;
 
+  let completion: any;
   try {
-    const completion = await ctx.client.chat.completions.create({
+    completion = await ctx.client.chat.completions.create({
       model: ctx.model,
       messages: [
         { role: "system", content: systemPrompt },
@@ -429,14 +585,46 @@ Output only valid JSON, no markdown. Example: {"score": 72, "feedback": "Add mor
       ],
       response_format: { type: "json_object" },
     });
-    const raw = completion.choices[0]?.message?.content?.trim();
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const score = clampScore(parsed.score);
-    const feedback = typeof parsed.feedback === "string" ? parsed.feedback.trim() : "";
-    if (score === null) return null;
+  } catch (err) {
+    logAiStageFailure("computeATSScore", "api_call_failed", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
+    return null;
+  }
 
-    const aspectsObj = parsed.aspects as Record<string, unknown> | undefined;
+  const raw = completion.choices[0]?.message?.content?.trim();
+  if (!raw) {
+    logAiStageFailure("computeATSScore", "invalid_output", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+    });
+    return null;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    logAiStageFailure("computeATSScore", "invalid_output", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+    });
+    return null;
+  }
+
+  const score = clampScore(parsed.score);
+  const feedback = typeof parsed.feedback === "string" ? parsed.feedback.trim() : "";
+  if (score === null) {
+    logAiStageFailure("computeATSScore", "invalid_output", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+    });
+    return null;
+  }
+
+  const aspectsObj = parsed.aspects as Record<string, unknown> | undefined;
     let aspects: ATSAspects | undefined;
     if (aspectsObj && typeof aspectsObj === "object") {
       const kw = clampScore(aspectsObj.keywords);
@@ -447,14 +635,11 @@ Output only valid JSON, no markdown. Example: {"score": 72, "feedback": "Add mor
       }
     }
 
-    return {
-      score,
-      feedback: feedback || "No feedback.",
-      aspects,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    score,
+    feedback: feedback || "No feedback.",
+    aspects,
+  };
 }
 
 /**
@@ -468,15 +653,23 @@ export async function refineResumeContentWithATSFeedback(
   atsFeedback: string
 ): Promise<ResumeContent | null> {
   const ctx = getLLMClient();
-  if (!ctx) return null;
+  if (!ctx) {
+    logAiStageFailure("refineResumeContentWithATSFeedback", "api_key_missing", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+      feedbackLen: atsFeedback.length,
+    });
+    return null;
+  }
 
   const systemPrompt = `You improve a resume so it scores higher with ATS (Applicant Tracking Systems). You are given the current resume (JSON), the job role and description, and feedback from an ATS-style evaluation. Revise the resume to address the feedback: add or align keywords, strengthen bullets, or adjust the summary/skills. Keep the same JSON structure: basicInfo, summary, experience, education, skills. Do not invent new jobs or dates—only rephrase and add relevant keywords from the job description. Respond with only the revised resume JSON object, no markdown or explanation.`;
 
   const jobDescTrimmed = jobDescription.slice(0, 3000);
   const userPrompt = `Job role: ${jobRole}\n\nJob description:\n${jobDescTrimmed}\n\nATS feedback to address:\n${atsFeedback}\n\nCurrent resume (JSON):\n${JSON.stringify(content)}\n\nOutput the revised resume as a single JSON object (same keys: basicInfo, summary, experience, education, skills).`;
 
+  let completion: any;
   try {
-    const completion = await ctx.client.chat.completions.create({
+    completion = await ctx.client.chat.completions.create({
       model: ctx.model,
       messages: [
         { role: "system", content: systemPrompt },
@@ -484,10 +677,34 @@ export async function refineResumeContentWithATSFeedback(
       ],
       response_format: { type: "json_object" },
     });
-    const raw = completion.choices[0]?.message?.content?.trim();
-    if (!raw) return null;
-    return parseResumeContentFromRaw(raw);
-  } catch {
+  } catch (err) {
+    logAiStageFailure("refineResumeContentWithATSFeedback", "api_call_failed", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+      feedbackLen: atsFeedback.length,
+      errorName: err instanceof Error ? err.name : "unknown",
+    });
     return null;
   }
+
+  const raw = completion.choices[0]?.message?.content?.trim();
+  if (!raw) {
+    logAiStageFailure("refineResumeContentWithATSFeedback", "invalid_output", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+      feedbackLen: atsFeedback.length,
+    });
+    return null;
+  }
+
+  const parsed = parseResumeContentFromRaw(raw);
+  if (!parsed) {
+    logAiStageFailure("refineResumeContentWithATSFeedback", "invalid_output", {
+      jobRoleLen: jobRole.length,
+      jobDescriptionLen: jobDescription.length,
+      feedbackLen: atsFeedback.length,
+    });
+  }
+
+  return parsed;
 }

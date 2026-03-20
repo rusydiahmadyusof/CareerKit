@@ -9,7 +9,9 @@ Build resumes and track job applications in one place.
 
 ## Run locally
 
-1. Copy env: `cp .env.example .env` (or copy `.env.example` to `.env`).
+1. Copy env:
+   - Windows (PowerShell): `Copy-Item .env.example .env`
+   - macOS/Linux: `cp .env.example .env`
 2. Fill in Supabase values in `.env` (from [Supabase dashboard](https://supabase.com/dashboard)).
 3. Install and run:
 
@@ -19,6 +21,14 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+## Supabase setup (migrations)
+
+For a fresh Supabase database, run the combined SQL once from `supabase/migrations/`:
+
+1. `careerkit_fresh.sql`
+
+Use either the Supabase Dashboard SQL editor or your Supabase CLI workflow.
 
 ## Env vars
 
@@ -36,7 +46,7 @@ In the [Supabase Dashboard](https://supabase.com/dashboard) â†’ Authentication â
 
 ## Deploy
 
-Connect this repo to [Vercel](https://vercel.com); set the env vars in the project settings. Deploys on push to main.
+Connect this repo to [Vercel](https://vercel.com); set the env vars in the project settings. Deploys on push to `main`.
 
 ## Docs
 

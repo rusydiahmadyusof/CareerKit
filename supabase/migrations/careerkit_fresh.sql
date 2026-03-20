@@ -1,6 +1,11 @@
--- CareerKit: unified schema (resumes, applications, profiles)
--- Run in Supabase SQL Editor or: supabase db push
-
+-- CareerKit: combined migration for fresh Supabase DB
+-- Run once in Supabase SQL editor.
+--
+-- This script is equivalent to running (in order):
+-- 1) 00000000000001_careerkit_schema.sql
+-- 2) 00000000000002_careerkit_ats_cache.sql
+-- 3) 00000000000003_careerkit_application_search_rpc.sql
+--
 -- Helper: keep updated_at in sync
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -98,3 +103,133 @@ create policy "Users can do everything on own profile"
 create trigger set_profiles_updated_at
   before update on public.profiles
   for each row execute function public.set_updated_at();
+
+-- ATS caching columns
+alter table public.resumes
+  add column if not exists last_ats_job_hash text;
+
+alter table public.resumes
+  add column if not exists last_ats_feedback text;
+
+alter table public.resumes
+  add column if not exists last_ats_aspects jsonb;
+
+-- Application search RPCs (safe, parameterized)
+
+-- Fetch applications for a user with optional filters.
+-- q is matched against company and role using ILIKE with wildcard escaping.
+create or replace function public.search_applications(
+  p_status text,
+  p_q text,
+  p_page int,
+  p_page_size int
+)
+returns table (
+  id uuid,
+  company text,
+  role text,
+  status text,
+  applied_at timestamptz,
+  updated_at timestamptz,
+  resume_id uuid,
+  resume_name text
+)
+language plpgsql
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_offset int := greatest(p_page - 1, 0) * p_page_size;
+  v_limit int := greatest(p_page_size, 1);
+  v_q_trimmed text;
+  v_like_pattern text;
+begin
+  v_q_trimmed := nullif(btrim(p_q), '');
+  if v_q_trimmed is not null then
+    -- Escape backslash, percent, underscore for LIKE ... ESCAPE '\'
+    v_like_pattern :=
+      replace(
+        replace(
+          replace(v_q_trimmed, '\\', '\\\\'),
+          '%',
+          '\\%'
+        ),
+        '_',
+        '\\_'
+      );
+  else
+    v_like_pattern := null;
+  end if;
+
+  return query
+  select
+    a.id,
+    a.company,
+    a.role,
+    a.status,
+    a.applied_at,
+    a.updated_at,
+    a.resume_id,
+    r.name as resume_name
+  from public.applications a
+  left join public.resumes r on r.id = a.resume_id
+  where a.user_id = v_uid
+    and (p_status is null or p_status = '' or a.status = p_status)
+    and (
+      v_like_pattern is null
+      or (
+        a.company ilike ('%' || v_like_pattern || '%') escape '\\'
+        or a.role ilike ('%' || v_like_pattern || '%') escape '\\'
+      )
+    )
+  order by a.updated_at desc
+  limit v_limit offset v_offset;
+end;
+$$;
+
+-- Count applications for a user with the same optional filters.
+create or replace function public.count_applications(
+  p_status text,
+  p_q text
+)
+returns bigint
+language plpgsql
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_q_trimmed text;
+  v_like_pattern text;
+begin
+  v_q_trimmed := nullif(btrim(p_q), '');
+  if v_q_trimmed is not null then
+    v_like_pattern :=
+      replace(
+        replace(
+          replace(v_q_trimmed, '\\', '\\\\'),
+          '%',
+          '\\%'
+        ),
+        '_',
+        '\\_'
+      );
+  else
+    v_like_pattern := null;
+  end if;
+
+  return (
+    select count(*)
+    from public.applications a
+    where a.user_id = v_uid
+      and (p_status is null or p_status = '' or a.status = p_status)
+      and (
+        v_like_pattern is null
+        or (
+          a.company ilike ('%' || v_like_pattern || '%') escape '\\'
+          or a.role ilike ('%' || v_like_pattern || '%') escape '\\'
+        )
+      )
+  );
+end;
+$$;
+

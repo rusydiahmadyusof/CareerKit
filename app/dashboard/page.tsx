@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Suspense } from "react";
 import Link from "next/link";
 import { formatTimeAgo } from "@/lib/format-date";
+import { redirect } from "next/navigation";
 import { AuthSuccessBanner } from "./auth-success-banner";
 import { ErrorBanner } from "@/components/error-banner";
 import { DashboardSummaryCards } from "@/components/dashboard/DashboardSummaryCards";
@@ -22,6 +23,11 @@ const ACTIVE_APPLICATION_STATUSES = ["applied", "screening", "interviewing"] as 
 export default async function DashboardPage() {
   const supabase = await createClient();
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
   let resumeCount = 0;
   let activeApplicationCount = 0;
   let interviewCount = 0;
@@ -37,23 +43,27 @@ export default async function DashboardPage() {
       recentResumesRes,
       recentApplicationsRes,
     ] = await Promise.all([
-      supabase.from("resumes").select("*", { count: "exact", head: true }),
+      supabase.from("resumes").select("*", { count: "exact", head: true }).eq("user_id", user.id),
       supabase
         .from("applications")
         .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id)
         .in("status", ACTIVE_APPLICATION_STATUSES),
       supabase
         .from("applications")
         .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id)
         .eq("status", "interviewing"),
       supabase
         .from("resumes")
         .select("id, name, updated_at")
+        .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(5),
       supabase
         .from("applications")
         .select("id, company, role, status, updated_at")
+        .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(5),
     ]);

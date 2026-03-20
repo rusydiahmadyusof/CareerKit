@@ -25,6 +25,7 @@ export default async function TailorResumePage({
       .from("applications")
       .select("role, notes")
       .eq("id", application_id.trim())
+      .eq("user_id", user.id)
       .single();
     if (application) {
       initialJobTitle = application.role ?? "";
@@ -35,6 +36,7 @@ export default async function TailorResumePage({
   const { data: resumes } = await supabase
     .from("resumes")
     .select("id, name")
+    .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 
   return (

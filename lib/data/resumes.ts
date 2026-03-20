@@ -186,3 +186,64 @@ export async function deleteResumeForUser(
   return error;
 }
 
+export type ATSAspectsForDb = { keywords: number; experience: number; skills: number };
+
+export async function getResumeAtsCacheForUser(
+  supabase: SupabaseClient,
+  { userId, resumeId }: AuthedResumePayload & { resumeId: string }
+): Promise<{
+  last_ats_job_hash: string | null;
+  last_ats_score: number | null;
+  last_ats_feedback: string | null;
+  last_ats_aspects: ATSAspectsForDb | null;
+} | null> {
+  const { data, error } = await supabase
+    .from("resumes")
+    .select("last_ats_job_hash, last_ats_score, last_ats_feedback, last_ats_aspects")
+    .eq("id", resumeId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !data) return null;
+
+  return {
+    last_ats_job_hash: data.last_ats_job_hash ?? null,
+    last_ats_score: data.last_ats_score ?? null,
+    last_ats_feedback: data.last_ats_feedback ?? null,
+    last_ats_aspects: (data.last_ats_aspects as ATSAspectsForDb | null) ?? null,
+  };
+}
+
+export async function updateResumeAtsResultForUser(
+  supabase: SupabaseClient,
+  {
+    userId,
+    resumeId,
+    jobHash,
+    score,
+    feedback,
+    aspects,
+  }: AuthedResumePayload & {
+    resumeId: string;
+    jobHash: string;
+    score: number;
+    feedback: string;
+    aspects?: ATSAspectsForDb | null;
+  }
+): Promise<PostgrestError | null> {
+  const clamped = Math.round(Math.min(100, Math.max(0, score)));
+
+  const { error } = await supabase
+    .from("resumes")
+    .update({
+      last_ats_job_hash: jobHash,
+      last_ats_score: clamped,
+      last_ats_feedback: feedback,
+      last_ats_aspects: aspects ?? null,
+    })
+    .eq("id", resumeId)
+    .eq("user_id", userId);
+
+  return error;
+}
+

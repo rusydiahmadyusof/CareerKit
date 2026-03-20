@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { getATSScoreForResume } from "@/lib/actions/resumes";
 import { Gauge, ChevronDown, ChevronUp } from "lucide-react";
 
@@ -51,7 +51,7 @@ export function ResumeATSScore({
   const hasInitialJob = defaultJobDescription.trim().length >= MIN_DESCRIPTION_LENGTH;
   const [showDifferentJobForm, setShowDifferentJobForm] = useState(!hasInitialJob);
 
-  async function runScore(role: string, description: string) {
+  const runScore = useCallback(async (role: string, description: string) => {
     const id = ++runIdRef.current;
     setLoading(true);
     setError(null);
@@ -75,7 +75,7 @@ export function ResumeATSScore({
     };
     setResult(payload);
     onScoreResultRef.current?.(payload);
-  }
+  }, [resumeId]);
 
   // Run once on load when we have a stored job, so the summary at top shows a score
   const initialJobRan = useRef(false);
@@ -86,7 +86,7 @@ export function ResumeATSScore({
     initialJobRan.current = true;
     const role = (defaultJobRole || "Role").trim();
     runScore(role, desc);
-  }, [resumeId, defaultJobRole, defaultJobDescription]);
+  }, [runScore, defaultJobRole, defaultJobDescription]);
 
   useEffect(() => {
     const trimmed = jobDescription.trim();
@@ -97,7 +97,7 @@ export function ResumeATSScore({
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(t);
-  }, [resumeId, jobRole, jobDescription]);
+  }, [runScore, jobRole, jobDescription]);
 
   async function handleScore() {
     if (!jobDescription.trim()) return;

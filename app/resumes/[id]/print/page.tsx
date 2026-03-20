@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ResumePreview } from "@/components/resume-preview";
 import { PrintButton } from "./print-button";
 import type { ResumeContent } from "@/lib/types/database";
@@ -14,10 +14,17 @@ export default async function ResumePrintPage({
   const { id } = await params;
   const { template } = await searchParams;
   const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
   const { data: resume } = await supabase
     .from("resumes")
     .select("name, content, template_id")
     .eq("id", id)
+    .eq("user_id", user.id)
     .single();
 
   if (!resume) notFound();

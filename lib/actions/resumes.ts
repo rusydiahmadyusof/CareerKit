@@ -3,15 +3,18 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import type { ResumeContent } from "@/lib/types/database";
+import { getAtsJobContextHash } from "@/lib/ats-hash";
 import {
   deleteResumeForUser,
   getResumeContentForUser,
   getResumeDetailsForUser,
+  getResumeAtsCacheForUser,
   insertResumeForUser,
   insertResumeForUserAndReturnId,
   updateResumeAtsScoreForUser,
   updateResumeForUser,
   updateResumeInitialJobForUser,
+  updateResumeAtsResultForUser,
 } from "@/lib/data/resumes";
 
 /** Returns the job title from a resume's basicInfo for the current user (e.g. to prefill application Role). */
@@ -33,6 +36,7 @@ import {
   generateSkillsFromContent,
   computeATSScore,
   refineResumeContentWithATSFeedback,
+  getAiUserSafeError,
 } from "@/lib/tailor-resume";
 import { getProfile } from "@/lib/actions/profile";
 import {
@@ -134,7 +138,7 @@ export async function regenerateProfessionalSummaryAction(
 ): Promise<{ summary?: string; error?: string }> {
   const summary = await generateProfessionalSummary(content, jobContext);
   if (summary != null) return { summary };
-  return { error: "Could not generate summary. Check API keys (GROQ_API_KEY or OPENAI_API_KEY)." };
+  return { error: getAiUserSafeError("generateProfessionalSummary") };
 }
 
 /** Regenerates skills list (5–8 high-level) from resume content; optional job context tailors it. */
@@ -144,7 +148,7 @@ export async function regenerateSkillsAction(
 ): Promise<{ skills?: Array<{ name?: string; category?: string }>; error?: string }> {
   const skills = await generateSkillsFromContent(content, jobContext);
   if (skills != null) return { skills };
-  return { error: "Could not generate skills. Check API keys (GROQ_API_KEY or OPENAI_API_KEY)." };
+  return { error: getAiUserSafeError("generateSkillsFromContent") };
 }
 
 /** ATS result with optional per-aspect scores for the summary. */
@@ -164,15 +168,42 @@ export async function getATSScoreForResume(
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
 
+  const jobRoleTrimmed = jobRole?.trim() || "Role";
   const desc = jobDescription?.trim();
   if (!desc) return { error: "Enter a job description to get an ATS score." };
+
+  const jobHash = getAtsJobContextHash(jobRoleTrimmed, desc);
+
+  const cached = await getResumeAtsCacheForUser(supabase, { userId: user.id, resumeId });
+  if (
+    cached &&
+    cached.last_ats_job_hash === jobHash &&
+    typeof cached.last_ats_score === "number" &&
+    cached.last_ats_feedback
+  ) {
+    return {
+      score: cached.last_ats_score,
+      feedback: cached.last_ats_feedback,
+      ...(cached.last_ats_aspects && { aspects: cached.last_ats_aspects }),
+    };
+  }
 
   const content = await getResumeContentForUser(supabase, { userId: user.id, resumeId });
   if (!content) return { error: "Resume not found" };
   if (!content || typeof content !== "object") return { error: "Resume has no content." };
 
-  const result = await computeATSScore(content, jobRole?.trim() || "Role", desc);
-  if (!result) return { error: "Could not compute score. Check API keys (GROQ_API_KEY or OPENAI_API_KEY)." };
+  const result = await computeATSScore(content, jobRoleTrimmed, desc);
+  if (!result) return { error: getAiUserSafeError("computeATSScore") };
+
+  await updateResumeAtsResultForUser(supabase, {
+    userId: user.id,
+    resumeId,
+    jobHash,
+    score: result.score,
+    feedback: result.feedback,
+    aspects: result.aspects ?? null,
+  });
+
   return {
     score: result.score,
     feedback: result.feedback,
@@ -249,6 +280,8 @@ export async function tailorResume(formData: FormData) {
 
   let baseContent: ResumeContent | null = null;
   let templateId = "default";
+  let atsResultForFeedback: Awaited<ReturnType<typeof computeATSScore>> | null = null;
+  let atsResultForCache: Awaited<ReturnType<typeof computeATSScore>> | null = null;
 
   if (baseResumeId && baseResumeId !== "scratch") {
     const original = await getResumeDetailsForUser(supabase, {
@@ -276,14 +309,14 @@ export async function tailorResume(formData: FormData) {
   let contentToUse: ResumeContent = generatedContent ?? baseContent ?? {};
 
   // Use ATS scoring to refine the generated resume when we have a job description
-  if (jobDescription.trim() !== "" && contentToUse && Object.keys(contentToUse).length > 0) {
-    const atsResult = await computeATSScore(contentToUse, jobTitle, jobDescription);
-    if (atsResult?.feedback) {
+  if (jobDescription.length >= 80 && contentToUse && Object.keys(contentToUse).length > 0) {
+    atsResultForFeedback = await computeATSScore(contentToUse, jobTitle, jobDescription);
+    if (atsResultForFeedback?.feedback) {
       const refined = await refineResumeContentWithATSFeedback(
         contentToUse,
         jobTitle,
         jobDescription,
-        atsResult.feedback
+        atsResultForFeedback.feedback
       );
       if (refined) contentToUse = refined;
     }
@@ -293,6 +326,15 @@ export async function tailorResume(formData: FormData) {
   contentToUse = mergeProfileBasicInfo(contentToUse, profile);
 
   const hasJobContext = jobDescription.trim() !== "";
+  const shouldComputeAts = jobDescription.length >= 80;
+
+  // Compute final ATS score for the post-processed resume content.
+  // This keeps cached results consistent with what users would see when opening
+  // the resume later.
+  if (shouldComputeAts && contentToUse && Object.keys(contentToUse).length > 0) {
+    atsResultForCache = await computeATSScore(contentToUse, jobTitle, jobDescription);
+  }
+
   const { id: insertedId, error: insertError } = await insertResumeForUserAndReturnId(supabase, {
     userId: user.id,
     name,
@@ -305,6 +347,19 @@ export async function tailorResume(formData: FormData) {
   if (insertError || !insertedId) {
     redirect("/resumes/tailor?error=" + encodeURIComponent(insertError?.message ?? "Insert failed"));
   }
+
+  if (atsResultForCache && atsResultForCache.feedback) {
+    const jobHash = getAtsJobContextHash(jobTitle, jobDescription);
+    await updateResumeAtsResultForUser(supabase, {
+      userId: user.id,
+      resumeId: insertedId,
+      jobHash,
+      score: atsResultForCache.score,
+      feedback: atsResultForCache.feedback,
+      aspects: atsResultForCache.aspects ?? null,
+    });
+  }
+
   const applicationId = (formData.get("application_id") as string)?.trim();
   const resumeUrl = insertedId ? `/resumes/${insertedId}` : "/resumes";
   if (insertedId && applicationId) {

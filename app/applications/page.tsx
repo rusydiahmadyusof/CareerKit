@@ -20,33 +20,64 @@ const STATUSES: ApplicationStatus[] = [
 export default async function ApplicationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; q?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; page?: string }>;
 }) {
-  const { status: statusFilter, q: searchQ } = await searchParams;
+  const { status: statusFilter, q: searchQ, page: pageParam } = await searchParams;
+  const PAGE_SIZE = 10;
+  const page = Math.max(1, Number(pageParam ?? 1));
   const supabase = await createClient();
 
-  let query = supabase
-    .from("applications")
-    .select("id, company, role, status, applied_at, updated_at, resume_id, resumes(name)")
-    .order("updated_at", { ascending: false });
+  const from = (page - 1) * PAGE_SIZE;
 
-  if (statusFilter && STATUSES.includes(statusFilter as ApplicationStatus)) {
-    query = query.eq("status", statusFilter);
-  }
-  if (searchQ && searchQ.trim()) {
-    const escaped = searchQ
-      .trim()
-      .replace(/\\/g, "\\\\")
-      .replace(/%/g, "\\%")
-      .replace(/_/g, "\\_");
-    query = query.or(
-      `company.ilike.%${escaped}%,role.ilike.%${escaped}%`
-    );
+  const statusParam =
+    statusFilter && STATUSES.includes(statusFilter as ApplicationStatus) ? statusFilter : null;
+  const qParam = searchQ && searchQ.trim() ? searchQ.trim() : null;
+
+  const [
+    { data: applications, error: applicationsError },
+    { data: totalCount, error: countError },
+  ] = await Promise.all([
+    supabase.rpc("search_applications", {
+      p_status: statusParam,
+      p_q: qParam,
+      p_page: page,
+      p_page_size: PAGE_SIZE,
+    }),
+    supabase.rpc("count_applications", {
+      p_status: statusParam,
+      p_q: qParam,
+    }),
+  ]);
+
+  const rpcError = applicationsError ?? countError;
+  const list = (applications ?? []).map((a: any) => ({
+    ...a,
+    resumes: a.resume_name ? [{ name: a.resume_name }] : null,
+  }));
+
+  const total = rpcError
+    ? list.length
+    : typeof totalCount === "number"
+      ? totalCount
+      : Number(totalCount ?? 0);
+
+  function buildPageHref(nextPage: number) {
+    const params = new URLSearchParams();
+    if (statusFilter && STATUSES.includes(statusFilter as ApplicationStatus)) {
+      params.set("status", statusFilter);
+    }
+    if (searchQ && searchQ.trim()) {
+      params.set("q", searchQ);
+    }
+    // Always include page; filter/search submissions omit it so it naturally resets.
+    params.set("page", String(nextPage));
+    return `/applications?${params.toString()}`;
   }
 
-  const { data: applications, error } = await query;
-  const list = applications ?? [];
-  const total = list.length;
+  const start = total === 0 ? 0 : list.length > 0 ? from + 1 : total;
+  const end = total === 0 ? 0 : list.length > 0 ? from + list.length : total;
+  const canGoPrev = page > 1;
+  const canGoNext = end < total;
 
   return (
     <>
@@ -75,18 +106,18 @@ export default async function ApplicationsPage({
       />
 
       {/* Applications List */}
-      {error && (
+      {rpcError && (
         <div className="mb-6">
-          <ErrorBanner message={error.message} />
+          <ErrorBanner message={rpcError.message} />
         </div>
       )}
 
-      {!error && !list.length ? (
+      {!rpcError && !list.length ? (
         <ApplicationsEmptyState
           statusFilter={statusFilter}
           searchQ={searchQ}
         />
-      ) : !error && list.length > 0 ? (
+      ) : !rpcError && list.length > 0 ? (
         <>
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" data-purpose="applications-list">
             {list.map((a) => (
@@ -96,31 +127,58 @@ export default async function ApplicationsPage({
 
           <div className="mt-6 flex items-center justify-between text-sm text-slate-500" data-purpose="pagination-footer">
             <p>
-              Showing 1 to {total} of {total} application{total !== 1 ? "s" : ""}
+              Showing {start} to {end} of {total} application{total !== 1 ? "s" : ""}
             </p>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded-lg border border-slate-200 p-2 transition-colors hover:bg-slate-50 disabled:opacity-50"
-                disabled
-                aria-label="Previous page"
-              >
-                <span className="sr-only">Previous</span>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-slate-200 p-2 transition-colors hover:bg-slate-50 disabled:opacity-50"
-                disabled
-                aria-label="Next page"
-              >
-                <span className="sr-only">Next</span>
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
+              {canGoPrev ? (
+                <Link
+                  href={buildPageHref(page - 1)}
+                  className="rounded-lg border border-slate-200 p-2 transition-colors hover:bg-slate-50"
+                  aria-label="Previous page"
+                >
+                  <span className="sr-only">Previous</span>
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 p-2 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  disabled
+                  aria-label="Previous page"
+                >
+                  <span className="sr-only">Previous</span>
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+
+              {canGoNext ? (
+                <Link
+                  href={buildPageHref(page + 1)}
+                  className="rounded-lg border border-slate-200 p-2 transition-colors hover:bg-slate-50"
+                  aria-label="Next page"
+                >
+                  <span className="sr-only">Next</span>
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-200 p-2 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  disabled
+                  aria-label="Next page"
+                >
+                  <span className="sr-only">Next</span>
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </>

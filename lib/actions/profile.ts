@@ -3,7 +3,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import type { Profile, ProfileUpdate } from "@/lib/types/database";
-import { generateProfessionalSummaryFromProfile, generateSkillsFromProfile } from "@/lib/tailor-resume";
+import {
+  generateProfessionalSummaryFromProfile,
+  generateSkillsFromProfile,
+  getAiUserSafeError,
+} from "@/lib/tailor-resume";
 import { getProfileForUser, skipOnboardingForUser, upsertProfileForUser } from "@/lib/data/profiles";
 import type { ActionResult } from "@/lib/actions/action-result";
 
@@ -45,14 +49,14 @@ export async function saveProfile(data: ProfileUpdate): Promise<ActionResult> {
 export async function generateProfileSummaryAction(profile: Pick<Profile, "experience" | "education" | "skills">) {
   const summary = await generateProfessionalSummaryFromProfile(profile);
   if (summary != null) return { summary };
-  return { error: "Could not generate summary. Add experience first and check API keys (GROQ_API_KEY or OPENAI_API_KEY)." };
+  return { error: getAiUserSafeError("generateProfessionalSummaryFromProfile") };
 }
 
 /** Generate skills from profile experience; prioritizes most recent/current role. */
 export async function generateProfileSkillsAction(profile: Pick<Profile, "experience" | "education" | "skills">) {
   const skills = await generateSkillsFromProfile(profile);
   if (skills != null && skills.length > 0) return { skills: skills.map((s) => s.name ?? "").filter(Boolean) };
-  return { error: "Could not generate skills. Add experience first and check API keys (GROQ_API_KEY or OPENAI_API_KEY)." };
+  return { error: getAiUserSafeError("generateSkillsFromProfile") };
 }
 
 /** Mark onboarding as skipped; user can fill profile later from Profile. */
