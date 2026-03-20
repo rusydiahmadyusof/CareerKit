@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { ApplicationRow } from "./application-row";
+import type { ApplicationRowItem } from "./application-row";
 import { ErrorBanner } from "@/components/error-banner";
 import { Plus } from "lucide-react";
 import type { ApplicationStatus } from "@/lib/types/database";
@@ -50,8 +51,15 @@ export default async function ApplicationsPage({
   ]);
 
   const rpcError = applicationsError ?? countError;
-  const list = (applications ?? []).map((a: any) => ({
-    ...a,
+  const list: ApplicationRowItem[] = (applications ?? []).map((a: any) => ({
+    id: a.id,
+    company: a.company,
+    role: a.role,
+    status: a.status,
+    applied_at: a.applied_at ?? null,
+    updated_at: a.updated_at,
+    resume_id: a.resume_id ?? null,
+    // Supabase relationship selects as an array, even for a single related resume.
     resumes: a.resume_name ? [{ name: a.resume_name }] : null,
   }));
 
