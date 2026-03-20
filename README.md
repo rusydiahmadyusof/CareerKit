@@ -2,6 +2,9 @@
 
 Build resumes and track job applications in one place.
 
+## Screenshot
+![CareerKit dashboard screenshot](./careerkit.png)
+
 ## Stack
 
 - **Next.js 15** (App Router), **TypeScript**, **Tailwind CSS**
