@@ -22,10 +22,17 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Env vars
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key |
+| Variable                        | Required | Description                                              |
+| ------------------------------- | -------- | -------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Yes      | Supabase project URL                                     |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes      | Supabase anon/public key                                 |
+| `GROQ_API_KEY`                  | No       | For tailor-to-job and ATS scoring (AI). Prefer Groq.      |
+| `OPENAI_API_KEY`                | No       | Alternative for tailor/ATS if Groq is not set.           |
+| `SUPABASE_SERVICE_ROLE_KEY`     | No       | Needed for account deletion (server-side auth delete).   |
+
+## Password reset (forgot password)
+
+In the [Supabase Dashboard](https://supabase.com/dashboard) → Authentication → URL Configuration, add your app URL to **Redirect URLs** (e.g. `https://yourapp.com/reset-password` and `http://localhost:3000/reset-password` for local testing). Otherwise the email reset link will not open your app.
 
 ## Deploy
 
