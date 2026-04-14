@@ -1,8 +1,9 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
 import { redirect } from "next/navigation";
 import type { ApplicationStatus } from "@/lib/types/database";
+import { parseApplicationForm } from "@/lib/actions/application-form";
 import {
   createApplicationForUser,
   deleteApplicationForUser,
@@ -11,26 +12,14 @@ import {
 } from "@/lib/data/applications";
 
 export async function createApplication(formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const company = (formData.get("company") as string)?.trim() || "";
-  const role = (formData.get("role") as string)?.trim() || "";
-  const status = (formData.get("status") as ApplicationStatus) || "saved";
-  const jobUrl = (formData.get("job_url") as string)?.trim() || null;
-  const appliedAtRaw = (formData.get("applied_at") as string)?.trim() || null;
-  const appliedAt = appliedAtRaw ? new Date(appliedAtRaw).toISOString() : null;
-  const notes = (formData.get("notes") as string)?.trim() || null;
-  const resumeId = (formData.get("resume_id") as string)?.trim() || null;
+  const user = await requireOnboardedUser();
+  const { company, role, status, jobUrl, appliedAt, notes, resumeId } = parseApplicationForm(formData);
 
   if (!company || !role) {
     redirect("/applications/new?error=" + encodeURIComponent("Company and role are required."));
   }
 
-  const error = await createApplicationForUser(supabase, {
+  const error = await createApplicationForUser({
     userId: user.id,
     company,
     role,
@@ -53,12 +42,8 @@ export async function updateApplicationStatus(
   id: string,
   status: ApplicationStatus
 ): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
-  const error = await updateApplicationStatusForUser(supabase, { userId: user.id, applicationId: id, status });
+  const user = await requireOnboardedUser();
+  const error = await updateApplicationStatusForUser({ userId: user.id, applicationId: id, status });
   if (error) return { error: error.message };
   return {};
 }
@@ -71,20 +56,8 @@ export async function updateApplicationAction(formData: FormData) {
 }
 
 export async function updateApplication(id: string, formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const company = (formData.get("company") as string)?.trim() || "";
-  const role = (formData.get("role") as string)?.trim() || "";
-  const status = (formData.get("status") as ApplicationStatus) || "saved";
-  const jobUrl = (formData.get("job_url") as string)?.trim() || null;
-  const appliedAtRaw = (formData.get("applied_at") as string)?.trim() || null;
-  const appliedAt = appliedAtRaw ? new Date(appliedAtRaw).toISOString() : null;
-  const notes = (formData.get("notes") as string)?.trim() || null;
-  const resumeId = (formData.get("resume_id") as string)?.trim() || null;
+  const user = await requireOnboardedUser();
+  const { company, role, status, jobUrl, appliedAt, notes, resumeId } = parseApplicationForm(formData);
 
   if (!company || !role) {
     redirect(
@@ -95,7 +68,7 @@ export async function updateApplication(id: string, formData: FormData) {
     );
   }
 
-  const error = await updateApplicationForUser(supabase, {
+  const error = await updateApplicationForUser({
     userId: user.id,
     applicationId: id,
     company,
@@ -120,16 +93,12 @@ export async function updateApplication(id: string, formData: FormData) {
 }
 
 export async function deleteApplication(formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
   const id = (formData.get("id") as string)?.trim();
   if (!id) redirect("/applications");
 
-  const error = await deleteApplicationForUser(supabase, { userId: user.id, applicationId: id });
+  const error = await deleteApplicationForUser({ userId: user.id, applicationId: id });
 
   if (error) {
     redirect(

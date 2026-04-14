@@ -1,13 +1,20 @@
 import Link from "next/link";
 import { Briefcase } from "lucide-react";
 import { ResetPasswordForm } from "./reset-password-form";
+import { requireGuest } from "@/lib/auth/guards";
 
 export const metadata = {
   title: "Set new password — CareerKit",
   description: "Set a new password for your CareerKit account.",
 };
 
-export default function ResetPasswordPage() {
+export default async function ResetPasswordPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ token?: string }>;
+}) {
+  await requireGuest();
+  const { token } = await searchParams;
   return (
     <div className="w-full max-w-[400px] p-8 bg-white border border-slate-200 rounded-lg shadow-sm">
       <div className="flex flex-col items-center mb-6">
@@ -25,7 +32,7 @@ export default function ResetPasswordPage() {
           </p>
         </div>
       </div>
-      <ResetPasswordForm />
+      <ResetPasswordForm token={token} />
       <p className="mt-6 text-center text-sm text-slate-500">
         <Link href="/login" className="text-primary font-medium hover:underline">
           ← Back to log in

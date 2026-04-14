@@ -1,6 +1,6 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import type { Profile, ProfileUpdate } from "@/lib/types/database";
 import {
@@ -12,13 +12,10 @@ import { getProfileForUser, skipOnboardingForUser, upsertProfileForUser } from "
 import type { ActionResult } from "@/lib/actions/action-result";
 
 export async function getProfile(): Promise<Profile | null> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return null;
 
-  return await getProfileForUser(supabase, { userId: user.id });
+  return await getProfileForUser({ userId: user.id });
 }
 
 /** Returns true if profile exists and has full_name or user skipped onboarding. */
@@ -28,12 +25,9 @@ export async function isOnboardingComplete(): Promise<boolean> {
 }
 
 export async function upsertProfile(data: ProfileUpdate) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
-  const error = await upsertProfileForUser(supabase, { userId: user.id, data });
+  const error = await upsertProfileForUser({ userId: user.id, data });
   if (error) return { error: error.message };
   return {};
 }
@@ -61,12 +55,9 @@ export async function generateProfileSkillsAction(profile: Pick<Profile, "experi
 
 /** Mark onboarding as skipped; user can fill profile later from Profile. */
 export async function skipOnboarding() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
-  const error = await skipOnboardingForUser(supabase, { userId: user.id });
+  const error = await skipOnboardingForUser({ userId: user.id });
   if (error) redirect("/onboarding?error=" + encodeURIComponent(error.message));
   redirect("/dashboard");
 }

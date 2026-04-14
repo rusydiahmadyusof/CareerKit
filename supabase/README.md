@@ -1,20 +1,25 @@
-# Supabase migrations
+# Database migrations
 
-Schema for CareerKit is versioned here. Apply migrations with one of these approaches:
+Schema for CareerKit is versioned here. These SQL files can be applied in Neon or any PostgreSQL host.
 
-## Option 1: Supabase Dashboard (quick)
+## Option 1: Neon SQL Editor (quick)
 
-1. Open your project at [Supabase Dashboard](https://supabase.com/dashboard) → **SQL Editor**.
-2. Run each migration in order (e.g. `20250305000001_create_resumes_and_applications.sql`, then `20250314000001_create_profiles.sql`).
-3. Or copy-paste and run the scripts.
+1. Open your project in Neon → **SQL Editor**.
+2. Run each migration in order (`20260414000001_neon_auth.sql`, then `careerkit_fresh.sql`).
 
-## Option 2: Supabase CLI
+## Option 2: psql CLI
 
-If you use the [Supabase CLI](https://supabase.com/docs/guides/cli):
+If you use `psql`:
 
 ```bash
-supabase link   # if not already linked
-supabase db push
+psql "$DATABASE_URL" -f supabase/migrations/20260414000001_neon_auth.sql
+psql "$DATABASE_URL" -f supabase/migrations/careerkit_fresh.sql
 ```
 
-After applying, tables `resumes`, `applications`, and `profiles` exist with RLS; the app uses `auth.uid()` so users only see their own rows.
+After applying, app tables `app_users`, `app_sessions`, and `password_reset_tokens` are available, plus `resumes`, `applications`, and `profiles`.
+
+Validate bootstrap:
+
+```bash
+npm run verify:neon-bootstrap
+```

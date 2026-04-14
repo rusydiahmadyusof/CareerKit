@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { Briefcase } from "lucide-react";
 import { SignUpForm } from "./signup-form";
+import { requireGuest } from "@/lib/auth/guards";
 
-export default function SignUpPage() {
+export default async function SignUpPage() {
+  await requireGuest();
   return (
     <div className="w-full max-w-[400px] p-8 bg-white border border-slate-200 rounded-lg shadow-sm">
       <div className="flex flex-col items-center mb-6">

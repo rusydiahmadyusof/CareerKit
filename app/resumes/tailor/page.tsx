@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
+import { query } from "@/lib/db";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { TailorResumeForm } from "./tailor-resume-form";
@@ -8,11 +9,7 @@ export default async function TailorResumePage({
 }: {
   searchParams: Promise<{ error?: string; application_id?: string }>;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
   const params = await searchParams;
   const { error, application_id } = params;
@@ -21,23 +18,21 @@ export default async function TailorResumePage({
   let initialJobDescription = "";
 
   if (application_id?.trim()) {
-    const { data: application } = await supabase
-      .from("applications")
-      .select("role, notes")
-      .eq("id", application_id.trim())
-      .eq("user_id", user.id)
-      .single();
+    const applications = await query<{ role: string | null; notes: string | null }>(
+      "select role, notes from applications where id = $1 and user_id = $2 limit 1",
+      [application_id.trim(), user.id]
+    );
+    const application = applications[0];
     if (application) {
       initialJobTitle = application.role ?? "";
       initialJobDescription = application.notes ?? "";
     }
   }
 
-  const { data: resumes } = await supabase
-    .from("resumes")
-    .select("id, name")
-    .eq("user_id", user.id)
-    .order("updated_at", { ascending: false });
+  const resumes = await query<{ id: string; name: string }>(
+    "select id, name from resumes where user_id = $1 order by updated_at desc",
+    [user.id]
+  );
 
   return (
     <main className="flex-1 p-6" data-purpose="main-content-area">
@@ -74,7 +69,7 @@ export default async function TailorResumePage({
           data-purpose="form-card"
         >
           <TailorResumeForm
-            resumes={resumes ?? []}
+            resumes={resumes}
             initialJobTitle={initialJobTitle}
             initialJobDescription={initialJobDescription}
             applicationId={application_id?.trim() ?? undefined}

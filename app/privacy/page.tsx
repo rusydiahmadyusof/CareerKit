@@ -45,8 +45,8 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">Where it is stored</h2>
             <p className="mt-2">
-              Data is stored on Supabase. AI features may use third-party APIs. See your deployment and Supabase
-              config for region and subprocessors.
+              Data is stored in our managed PostgreSQL infrastructure. AI features may use third-party APIs.
+              See your deployment and database provider configuration for region and subprocessors.
             </p>
           </section>
 

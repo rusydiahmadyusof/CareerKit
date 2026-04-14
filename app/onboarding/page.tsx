@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireAuthedUser } from "@/lib/auth/guards";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Briefcase } from "lucide-react";
@@ -10,11 +10,7 @@ export default async function OnboardingPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireAuthedUser();
 
   if (await isOnboardingComplete()) {
     redirect("/dashboard");

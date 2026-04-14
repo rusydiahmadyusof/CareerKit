@@ -1,10 +1,10 @@
--- CareerKit: combined migration for fresh Supabase DB
--- Run once in Supabase SQL editor.
+-- CareerKit: combined migration for fresh Neon DB
+-- Run once in Neon SQL editor after 20260414000001_neon_auth.sql.
 --
 -- This script is equivalent to running (in order):
 -- 1) 00000000000001_careerkit_schema.sql
 -- 2) 00000000000002_careerkit_ats_cache.sql
--- 3) 00000000000003_careerkit_application_search_rpc.sql
+-- 3) 00000000000003_careerkit_application_search_rpc.sql (legacy; app now uses direct SQL)
 --
 -- Helper: keep updated_at in sync
 create or replace function public.set_updated_at()
@@ -18,7 +18,7 @@ $$ language plpgsql;
 -- Resumes
 create table if not exists public.resumes (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id uuid not null references public.app_users(id) on delete cascade,
   name text not null default 'Untitled Resume',
   template_id text not null default 'default',
   content jsonb not null default '{}',
@@ -32,11 +32,6 @@ create table if not exists public.resumes (
 create index if not exists idx_resumes_user_id on public.resumes(user_id);
 create index if not exists idx_resumes_updated_at on public.resumes(updated_at desc);
 
-alter table public.resumes enable row level security;
-create policy "Users can do everything on own resumes"
-  on public.resumes for all
-  using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
 create trigger set_resumes_updated_at
   before update on public.resumes
   for each row execute function public.set_updated_at();
@@ -44,7 +39,7 @@ create trigger set_resumes_updated_at
 -- Applications
 create table if not exists public.applications (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id uuid not null references public.app_users(id) on delete cascade,
   company text not null,
   role text not null,
   job_url text,
@@ -64,11 +59,6 @@ create index if not exists idx_applications_status on public.applications(status
 create index if not exists idx_applications_applied_at on public.applications(applied_at desc nulls last);
 create index if not exists idx_applications_resume_id on public.applications(resume_id);
 
-alter table public.applications enable row level security;
-create policy "Users can do everything on own applications"
-  on public.applications for all
-  using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
 create trigger set_applications_updated_at
   before update on public.applications
   for each row execute function public.set_updated_at();
@@ -76,7 +66,7 @@ create trigger set_applications_updated_at
 -- Profiles
 create table if not exists public.profiles (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null unique references auth.users(id) on delete cascade,
+  user_id uuid not null unique references public.app_users(id) on delete cascade,
   full_name text,
   email text,
   phone text,
@@ -95,11 +85,6 @@ create table if not exists public.profiles (
 
 create index if not exists idx_profiles_user_id on public.profiles(user_id);
 
-alter table public.profiles enable row level security;
-create policy "Users can do everything on own profile"
-  on public.profiles for all
-  using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
 create trigger set_profiles_updated_at
   before update on public.profiles
   for each row execute function public.set_updated_at();
@@ -114,7 +99,7 @@ alter table public.resumes
 alter table public.resumes
   add column if not exists last_ats_aspects jsonb;
 
--- Application search RPCs (safe, parameterized)
+-- Application search RPCs (safe, parameterized; kept for backward compatibility)
 
 -- Fetch applications for a user with optional filters.
 -- q is matched against company and role using ILIKE with wildcard escaping.
@@ -138,12 +123,15 @@ language plpgsql
 stable
 as $$
 declare
-  v_uid uuid := auth.uid();
+  v_uid uuid;
   v_offset int := greatest(p_page - 1, 0) * p_page_size;
   v_limit int := greatest(p_page_size, 1);
   v_q_trimmed text;
   v_like_pattern text;
 begin
+  -- Deprecated in Neon app runtime: auth context removed.
+  -- Keep function definable for compatibility; return empty for direct invocation.
+  v_uid := null;
   v_q_trimmed := nullif(btrim(p_q), '');
   if v_q_trimmed is not null then
     -- Escape backslash, percent, underscore for LIKE ... ESCAPE '\'
@@ -173,7 +161,7 @@ begin
     r.name as resume_name
   from public.applications a
   left join public.resumes r on r.id = a.resume_id
-  where a.user_id = v_uid
+  where v_uid is not null and a.user_id = v_uid
     and (p_status is null or p_status = '' or a.status = p_status)
     and (
       v_like_pattern is null
@@ -197,10 +185,13 @@ language plpgsql
 stable
 as $$
 declare
-  v_uid uuid := auth.uid();
+  v_uid uuid;
   v_q_trimmed text;
   v_like_pattern text;
 begin
+  -- Deprecated in Neon app runtime: auth context removed.
+  -- Keep function definable for compatibility; return 0 for direct invocation.
+  v_uid := null;
   v_q_trimmed := nullif(btrim(p_q), '');
   if v_q_trimmed is not null then
     v_like_pattern :=
@@ -220,7 +211,7 @@ begin
   return (
     select count(*)
     from public.applications a
-    where a.user_id = v_uid
+    where v_uid is not null and a.user_id = v_uid
       and (p_status is null or p_status = '' or a.status = p_status)
       and (
         v_like_pattern is null

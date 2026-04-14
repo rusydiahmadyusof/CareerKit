@@ -1,39 +1,50 @@
 "use server";
 
-import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
+import { query } from "@/lib/db";
 import type { ResumeContent } from "@/lib/types/database";
+import type { DbError } from "@/lib/data/shared";
 
 type AuthedResumePayload = {
   userId: string;
 };
 
+function buildInsertResumeArgs(payload: {
+  user_id: string;
+  name: string;
+  template_id: string;
+  content: ResumeContent;
+  initial_job_title?: string | null;
+  initial_job_description?: string | null;
+}) {
+  return [
+    payload.user_id,
+    payload.name,
+    payload.template_id,
+    JSON.stringify(payload.content),
+    payload.initial_job_title ?? null,
+    payload.initial_job_description ?? null,
+  ];
+}
+
 export async function getResumeContentForUser(
-  supabase: SupabaseClient,
   { userId, resumeId }: AuthedResumePayload & { resumeId: string }
 ): Promise<ResumeContent | null> {
-  const { data, error } = await supabase
-    .from("resumes")
-    .select("content")
-    .eq("id", resumeId)
-    .eq("user_id", userId)
-    .single();
-
-  if (error || !data) return null;
-  return (data.content as ResumeContent) ?? null;
+  const rows = await query<{ content: ResumeContent }>(
+    "select content from resumes where id = $1 and user_id = $2 limit 1",
+    [resumeId, userId]
+  );
+  return rows[0]?.content ?? null;
 }
 
 export async function getResumeDetailsForUser(
-  supabase: SupabaseClient,
   { userId, resumeId }: AuthedResumePayload & { resumeId: string }
 ): Promise<{ name: string; template_id: string; content: ResumeContent } | null> {
-  const { data, error } = await supabase
-    .from("resumes")
-    .select("name, template_id, content")
-    .eq("id", resumeId)
-    .eq("user_id", userId)
-    .single();
-
-  if (error || !data) return null;
+  const rows = await query<{ name: string; template_id: string; content: ResumeContent }>(
+    "select name, template_id, content from resumes where id = $1 and user_id = $2 limit 1",
+    [resumeId, userId]
+  );
+  const data = rows[0];
+  if (!data) return null;
   return {
     name: data.name,
     template_id: data.template_id,
@@ -42,7 +53,6 @@ export async function getResumeDetailsForUser(
 }
 
 export async function updateResumeForUser(
-  supabase: SupabaseClient,
   {
     userId,
     resumeId,
@@ -55,57 +65,54 @@ export async function updateResumeForUser(
     template_id: string;
     content: ResumeContent;
   }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase
-    .from("resumes")
-    .update({
-      name,
-      template_id,
-      content,
-    })
-    .eq("id", resumeId)
-    .eq("user_id", userId);
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query(
+      "update resumes set name = $1, template_id = $2, content = $3, updated_at = now() where id = $4 and user_id = $5",
+      [name, template_id, JSON.stringify(content), resumeId, userId]
+    );
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to update resume." };
+  }
 }
 
 export async function updateResumeAtsScoreForUser(
-  supabase: SupabaseClient,
   { userId, resumeId, score }: AuthedResumePayload & { resumeId: string; score: number }
-): Promise<PostgrestError | null> {
+): Promise<DbError | null> {
   const clamped = Math.round(Math.min(100, Math.max(0, score)));
-  const { error } = await supabase
-    .from("resumes")
-    .update({ last_ats_score: clamped })
-    .eq("id", resumeId)
-    .eq("user_id", userId);
-
-  return error;
+  try {
+    await query("update resumes set last_ats_score = $1, updated_at = now() where id = $2 and user_id = $3", [
+      clamped,
+      resumeId,
+      userId,
+    ]);
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to update ATS score." };
+  }
 }
 
 export async function updateResumeInitialJobForUser(
-  supabase: SupabaseClient,
   {
     userId,
     resumeId,
     jobTitle,
     jobDescription,
   }: AuthedResumePayload & { resumeId: string; jobTitle: string; jobDescription: string }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase
-    .from("resumes")
-    .update({
-      initial_job_title: jobTitle.trim() || null,
-      initial_job_description: jobDescription.trim() || null,
-    })
-    .eq("id", resumeId)
-    .eq("user_id", userId);
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query(
+      "update resumes set initial_job_title = $1, initial_job_description = $2, updated_at = now() where id = $3 and user_id = $4",
+      [jobTitle.trim() || null, jobDescription.trim() || null, resumeId, userId]
+    );
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to update job context." };
+  }
 }
 
 export async function insertResumeForUser(
-  supabase: SupabaseClient,
   {
     userId,
     name,
@@ -120,7 +127,7 @@ export async function insertResumeForUser(
     initial_job_title?: string | null;
     initial_job_description?: string | null;
   }
-): Promise<PostgrestError | null> {
+): Promise<DbError | null> {
   const payload: Record<string, unknown> = {
     user_id: userId,
     name,
@@ -132,12 +139,26 @@ export async function insertResumeForUser(
   if (initial_job_description !== undefined)
     payload.initial_job_description = initial_job_description;
 
-  const { error } = await supabase.from("resumes").insert(payload);
-  return error;
+  try {
+    await query(
+      `insert into resumes (user_id, name, template_id, content, initial_job_title, initial_job_description)
+       values ($1, $2, $3, $4, $5, $6)`,
+      buildInsertResumeArgs(payload as {
+        user_id: string;
+        name: string;
+        template_id: string;
+        content: ResumeContent;
+        initial_job_title?: string | null;
+        initial_job_description?: string | null;
+      })
+    );
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to create resume." };
+  }
 }
 
 export async function insertResumeForUserAndReturnId(
-  supabase: SupabaseClient,
   {
     userId,
     name,
@@ -152,7 +173,7 @@ export async function insertResumeForUserAndReturnId(
     initial_job_title?: string | null;
     initial_job_description?: string | null;
   }
-): Promise<{ id?: string; error: PostgrestError | null }> {
+): Promise<{ id?: string; error: DbError | null }> {
   const payload: Record<string, unknown> = {
     user_id: userId,
     name,
@@ -164,32 +185,39 @@ export async function insertResumeForUserAndReturnId(
   if (initial_job_description !== undefined)
     payload.initial_job_description = initial_job_description;
 
-  const { data, error } = await supabase
-    .from("resumes")
-    .insert(payload)
-    .select("id")
-    .single();
-
-  return { id: data?.id, error };
+  try {
+    const rows = await query<{ id: string }>(
+      `insert into resumes (user_id, name, template_id, content, initial_job_title, initial_job_description)
+       values ($1, $2, $3, $4, $5, $6) returning id`,
+      buildInsertResumeArgs(payload as {
+        user_id: string;
+        name: string;
+        template_id: string;
+        content: ResumeContent;
+        initial_job_title?: string | null;
+        initial_job_description?: string | null;
+      })
+    );
+    return { id: rows[0]?.id, error: null };
+  } catch (error) {
+    return { error: { message: error instanceof Error ? error.message : "Failed to create resume." } };
+  }
 }
 
 export async function deleteResumeForUser(
-  supabase: SupabaseClient,
   { userId, resumeId }: AuthedResumePayload & { resumeId: string }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase
-    .from("resumes")
-    .delete()
-    .eq("id", resumeId)
-    .eq("user_id", userId);
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query("delete from resumes where id = $1 and user_id = $2", [resumeId, userId]);
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to delete resume." };
+  }
 }
 
 export type ATSAspectsForDb = { keywords: number; experience: number; skills: number };
 
 export async function getResumeAtsCacheForUser(
-  supabase: SupabaseClient,
   { userId, resumeId }: AuthedResumePayload & { resumeId: string }
 ): Promise<{
   last_ats_job_hash: string | null;
@@ -197,14 +225,17 @@ export async function getResumeAtsCacheForUser(
   last_ats_feedback: string | null;
   last_ats_aspects: ATSAspectsForDb | null;
 } | null> {
-  const { data, error } = await supabase
-    .from("resumes")
-    .select("last_ats_job_hash, last_ats_score, last_ats_feedback, last_ats_aspects")
-    .eq("id", resumeId)
-    .eq("user_id", userId)
-    .single();
-
-  if (error || !data) return null;
+  const rows = await query<{
+    last_ats_job_hash: string | null;
+    last_ats_score: number | null;
+    last_ats_feedback: string | null;
+    last_ats_aspects: ATSAspectsForDb | null;
+  }>(
+    "select last_ats_job_hash, last_ats_score, last_ats_feedback, last_ats_aspects from resumes where id = $1 and user_id = $2 limit 1",
+    [resumeId, userId]
+  );
+  const data = rows[0];
+  if (!data) return null;
 
   return {
     last_ats_job_hash: data.last_ats_job_hash ?? null,
@@ -215,7 +246,6 @@ export async function getResumeAtsCacheForUser(
 }
 
 export async function updateResumeAtsResultForUser(
-  supabase: SupabaseClient,
   {
     userId,
     resumeId,
@@ -230,20 +260,22 @@ export async function updateResumeAtsResultForUser(
     feedback: string;
     aspects?: ATSAspectsForDb | null;
   }
-): Promise<PostgrestError | null> {
+): Promise<DbError | null> {
   const clamped = Math.round(Math.min(100, Math.max(0, score)));
-
-  const { error } = await supabase
-    .from("resumes")
-    .update({
-      last_ats_job_hash: jobHash,
-      last_ats_score: clamped,
-      last_ats_feedback: feedback,
-      last_ats_aspects: aspects ?? null,
-    })
-    .eq("id", resumeId)
-    .eq("user_id", userId);
-
-  return error;
+  try {
+    await query(
+      `update resumes
+       set last_ats_job_hash = $1,
+           last_ats_score = $2,
+           last_ats_feedback = $3,
+           last_ats_aspects = $4,
+           updated_at = now()
+       where id = $5 and user_id = $6`,
+      [jobHash, clamped, feedback, aspects ? JSON.stringify(aspects) : null, resumeId, userId]
+    );
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to update ATS result." };
+  }
 }
 

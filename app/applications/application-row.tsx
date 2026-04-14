@@ -14,7 +14,7 @@ export type ApplicationRowItem = {
   updated_at: string;
   applied_at: string | null;
   resume_id: string | null;
-  // Supabase relationship selects as an array, even for a single related resume.
+  // Keep shape compatible with existing row renderer.
   resumes: { name: string }[] | null;
 };
 

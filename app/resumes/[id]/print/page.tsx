@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
+import { query } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { ResumePreview } from "@/components/resume-preview";
 import { PrintButton } from "./print-button";
@@ -13,19 +14,13 @@ export default async function ResumePrintPage({
 }) {
   const { id } = await params;
   const { template } = await searchParams;
-  const supabase = await createClient();
+  const user = await requireOnboardedUser();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: resume } = await supabase
-    .from("resumes")
-    .select("name, content, template_id")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single();
+  const resumeRows = await query<{ name: string; content: ResumeContent; template_id: string }>(
+    "select name, content, template_id from resumes where id = $1 and user_id = $2 limit 1",
+    [id, user.id]
+  );
+  const resume = resumeRows[0];
 
   if (!resume) notFound();
 

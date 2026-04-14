@@ -1,10 +1,10 @@
 "use server";
 
-import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
+import { query } from "@/lib/db";
 import type { ApplicationStatus } from "@/lib/types/database";
+import type { DbError } from "@/lib/data/shared";
 
 export async function createApplicationForUser(
-  supabase: SupabaseClient,
   {
     userId,
     company,
@@ -24,36 +24,34 @@ export async function createApplicationForUser(
     notes: string | null;
     resumeId: string | null;
   }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase.from("applications").insert({
-    user_id: userId,
-    company,
-    role,
-    status,
-    job_url: jobUrl,
-    applied_at: appliedAt,
-    notes,
-    resume_id: resumeId,
-  });
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query(
+      "insert into applications (user_id, company, role, status, job_url, applied_at, notes, resume_id) values ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [userId, company, role, status, jobUrl, appliedAt, notes, resumeId]
+    );
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to create application." };
+  }
 }
 
 export async function updateApplicationStatusForUser(
-  supabase: SupabaseClient,
   { userId, applicationId, status }: { userId: string; applicationId: string; status: ApplicationStatus }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase
-    .from("applications")
-    .update({ status })
-    .eq("id", applicationId)
-    .eq("user_id", userId);
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query("update applications set status = $1, updated_at = now() where id = $2 and user_id = $3", [
+      status,
+      applicationId,
+      userId,
+    ]);
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to update application." };
+  }
 }
 
 export async function updateApplicationForUser(
-  supabase: SupabaseClient,
   {
     userId,
     applicationId,
@@ -75,34 +73,28 @@ export async function updateApplicationForUser(
     notes: string | null;
     resumeId: string | null;
   }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase
-    .from("applications")
-    .update({
-      company,
-      role,
-      status,
-      job_url: jobUrl,
-      applied_at: appliedAt,
-      notes,
-      resume_id: resumeId,
-    })
-    .eq("id", applicationId)
-    .eq("user_id", userId);
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query(
+      `update applications
+       set company = $1, role = $2, status = $3, job_url = $4, applied_at = $5, notes = $6, resume_id = $7, updated_at = now()
+       where id = $8 and user_id = $9`,
+      [company, role, status, jobUrl, appliedAt, notes, resumeId, applicationId, userId]
+    );
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to update application." };
+  }
 }
 
 export async function deleteApplicationForUser(
-  supabase: SupabaseClient,
   { userId, applicationId }: { userId: string; applicationId: string }
-): Promise<PostgrestError | null> {
-  const { error } = await supabase
-    .from("applications")
-    .delete()
-    .eq("id", applicationId)
-    .eq("user_id", userId);
-
-  return error;
+): Promise<DbError | null> {
+  try {
+    await query("delete from applications where id = $1 and user_id = $2", [applicationId, userId]);
+    return null;
+  } catch (error) {
+    return { message: error instanceof Error ? error.message : "Failed to delete application." };
+  }
 }
 

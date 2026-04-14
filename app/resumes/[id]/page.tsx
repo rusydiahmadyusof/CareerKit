@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
+import { query } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { ResumeEditor } from "./resume-editor";
 import type { Resume } from "@/lib/types/database";
@@ -12,19 +13,13 @@ export default async function ResumeDetailPage({
 }) {
   const { id } = await params;
   const { application_id } = await searchParams;
-  const supabase = await createClient();
+  const user = await requireOnboardedUser();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: resume } = await supabase
-    .from("resumes")
-    .select("*")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single();
+  const resumeRows = await query<Resume>("select * from resumes where id = $1 and user_id = $2 limit 1", [
+    id,
+    user.id,
+  ]);
+  const resume = resumeRows[0];
 
   if (!resume) notFound();
 

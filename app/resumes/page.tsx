@@ -1,5 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
+import { requireOnboardedUser } from "@/lib/auth/guards";
+import { query } from "@/lib/db";
 import type { Resume } from "@/lib/types/database";
 import { formatShortDate } from "@/lib/format-date";
 import { ErrorBanner } from "@/components/error-banner";
@@ -61,30 +61,18 @@ function ATSScoreCircle({ score }: { score: number }) {
 }
 
 export default async function ResumesPage() {
-  const supabase = await createClient();
+  const user = await requireOnboardedUser();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: resumes, error } = await supabase
-    .from("resumes")
-    .select("id, name, updated_at, last_ats_score")
-    .eq("user_id", user.id)
-    .order("updated_at", { ascending: false });
-
-  // If last_ats_score column doesn't exist yet (migration not run), re-fetch without it so the page loads
-  const needsFallback = error?.message?.includes("last_ats_score");
-  const { data: fallbackResumes, error: fallbackError } = needsFallback
-    ? await supabase
-        .from("resumes")
-        .select("id, name, updated_at")
-        .eq("user_id", user.id)
-        .order("updated_at", { ascending: false })
-    : { data: null, error: null };
-  const resolvedResumes = needsFallback ? fallbackResumes : resumes;
-  const resolvedError = needsFallback ? fallbackError : error;
+  let resolvedResumes: Array<Pick<Resume, "id" | "name" | "updated_at"> & { last_ats_score?: number | null }> = [];
+  let resolvedError: { message: string } | null = null;
+  try {
+    resolvedResumes = await query(
+      "select id, name, updated_at, last_ats_score from resumes where user_id = $1 order by updated_at desc",
+      [user.id]
+    );
+  } catch (error) {
+    resolvedError = { message: error instanceof Error ? error.message : "Failed to load resumes" };
+  }
 
   return (
     <div className="flex flex-col">

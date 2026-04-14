@@ -1,6 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth/session";
+import { requireOnboardedUser } from "@/lib/auth/guards";
 import { redirect } from "next/navigation";
 import type { ResumeContent } from "@/lib/types/database";
 import { getAtsJobContextHash } from "@/lib/ats-hash";
@@ -16,47 +17,35 @@ import {
   updateResumeInitialJobForUser,
   updateResumeAtsResultForUser,
 } from "@/lib/data/resumes";
+import { runTailorResumeWorkflow } from "@/lib/services/tailor-resume-workflow";
 
 /** Returns the job title from a resume's basicInfo for the current user (e.g. to prefill application Role). */
 export async function getResumeJobTitle(resumeId: string): Promise<string | null> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return null;
   const id = resumeId?.trim();
   if (!id) return null;
-  const content = await getResumeContentForUser(supabase, { userId: user.id, resumeId: id });
+  const content = await getResumeContentForUser({ userId: user.id, resumeId: id });
   const jobTitle = content?.basicInfo?.jobTitle;
   return typeof jobTitle === "string" && jobTitle.trim() ? jobTitle.trim() : null;
 }
 import {
-  generateResumeContentFromJob,
   generateProfessionalSummary,
   generateSkillsFromContent,
   computeATSScore,
-  refineResumeContentWithATSFeedback,
   getAiUserSafeError,
 } from "@/lib/tailor-resume";
 import { getProfile } from "@/lib/actions/profile";
-import {
-  profileToResumeContent,
-  mergeProfileBasicInfo,
-  mergeProfileExperienceAndEducation,
-} from "@/lib/profile-to-resume";
+import { profileToResumeContent } from "@/lib/profile-to-resume";
 
 export async function createResume(formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
   const name = (formData.get("name") as string)?.trim() || "Untitled Resume";
   const profile = await getProfile();
   const content = profileToResumeContent(profile);
 
-  const error = await insertResumeForUser(supabase, {
+  const error = await insertResumeForUser({
     userId: user.id,
     name,
     template_id: "default",
@@ -75,14 +64,10 @@ export async function updateResume(
   data: { name: string; template_id: string; content: ResumeContent },
   applicationId?: string
 ) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
   const name = data.name.trim() || "Untitled Resume";
-  const error = await updateResumeForUser(supabase, {
+  const error = await updateResumeForUser({
     userId: user.id,
     resumeId: id,
     name,
@@ -104,12 +89,9 @@ export async function updateResume(
 
 /** Persist last ATS score so the resume list can show it in the circle chart. */
 export async function updateResumeAtsScore(id: string, score: number) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return;
-  await updateResumeAtsScoreForUser(supabase, { userId: user.id, resumeId: id, score });
+  await updateResumeAtsScoreForUser({ userId: user.id, resumeId: id, score });
 }
 
 /** Save job title and description on a resume (e.g. after first ATS score from scratch). */
@@ -118,12 +100,9 @@ export async function updateResumeInitialJob(
   jobTitle: string,
   jobDescription: string
 ) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return;
-  await updateResumeInitialJobForUser(supabase, {
+  await updateResumeInitialJobForUser({
     userId: user.id,
     resumeId: id,
     jobTitle,
@@ -162,10 +141,7 @@ export async function getATSScoreForResume(
   jobRole: string,
   jobDescription: string
 ): Promise<ATSScoreResponse> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return { error: "Not authenticated" };
 
   const jobRoleTrimmed = jobRole?.trim() || "Role";
@@ -174,7 +150,7 @@ export async function getATSScoreForResume(
 
   const jobHash = getAtsJobContextHash(jobRoleTrimmed, desc);
 
-  const cached = await getResumeAtsCacheForUser(supabase, { userId: user.id, resumeId });
+  const cached = await getResumeAtsCacheForUser({ userId: user.id, resumeId });
   if (
     cached &&
     cached.last_ats_job_hash === jobHash &&
@@ -188,14 +164,14 @@ export async function getATSScoreForResume(
     };
   }
 
-  const content = await getResumeContentForUser(supabase, { userId: user.id, resumeId });
+  const content = await getResumeContentForUser({ userId: user.id, resumeId });
   if (!content) return { error: "Resume not found" };
   if (!content || typeof content !== "object") return { error: "Resume has no content." };
 
   const result = await computeATSScore(content, jobRoleTrimmed, desc);
   if (!result) return { error: getAiUserSafeError("computeATSScore") };
 
-  await updateResumeAtsResultForUser(supabase, {
+  await updateResumeAtsResultForUser({
     userId: user.id,
     resumeId,
     jobHash,
@@ -212,20 +188,16 @@ export async function getATSScoreForResume(
 }
 
 export async function duplicateResume(id: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
-  const original = await getResumeDetailsForUser(supabase, { userId: user.id, resumeId: id });
+  const original = await getResumeDetailsForUser({ userId: user.id, resumeId: id });
 
   if (!original) {
     redirect("/resumes?error=" + encodeURIComponent("Resume not found"));
   }
 
   const name = (original.name?.trim() || "Untitled Resume") + " (Copy)";
-  const insertError = await insertResumeForUser(supabase, {
+  const insertError = await insertResumeForUser({
     userId: user.id,
     name,
     template_id: original.template_id ?? "default",
@@ -246,13 +218,9 @@ export async function duplicateResumeAction(formData: FormData) {
 }
 
 export async function deleteResume(id: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
-  const error = await deleteResumeForUser(supabase, { userId: user.id, resumeId: id });
+  const error = await deleteResumeForUser({ userId: user.id, resumeId: id });
   if (error) return { error: error.message };
 
   redirect("/resumes");
@@ -265,101 +233,26 @@ export async function deleteResumeAction(formData: FormData) {
 }
 
 export async function tailorResume(formData: FormData) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
   const jobTitle = (formData.get("job-title") as string)?.trim() || "Untitled";
   const jobDescription = (formData.get("job-description") as string)?.trim() || "";
   const baseResumeId = (formData.get("base-resume") as string)?.trim();
 
-  const name = `Resume – ${jobTitle}`;
   const profile = await getProfile();
-
-  let baseContent: ResumeContent | null = null;
-  let templateId = "default";
-  let atsResultForFeedback: Awaited<ReturnType<typeof computeATSScore>> | null = null;
-  let atsResultForCache: Awaited<ReturnType<typeof computeATSScore>> | null = null;
-
-  if (baseResumeId && baseResumeId !== "scratch") {
-    const original = await getResumeDetailsForUser(supabase, {
-      userId: user.id,
-      resumeId: baseResumeId,
-    });
-
-    if (!original) {
-      redirect("/resumes/tailor?error=" + encodeURIComponent("Resume not found"));
-    }
-
-    templateId = original.template_id ?? "default";
-    baseContent = original.content ?? {};
-  } else {
-    baseContent = profileToResumeContent(profile);
-  }
-
-  baseContent = mergeProfileExperienceAndEducation(baseContent ?? {}, profile);
-
-  const generatedContent =
-    jobDescription.trim() !== ""
-      ? await generateResumeContentFromJob(jobTitle, jobDescription, baseContent ?? undefined)
-      : null;
-
-  let contentToUse: ResumeContent = generatedContent ?? baseContent ?? {};
-
-  // Use ATS scoring to refine the generated resume when we have a job description
-  if (jobDescription.length >= 80 && contentToUse && Object.keys(contentToUse).length > 0) {
-    atsResultForFeedback = await computeATSScore(contentToUse, jobTitle, jobDescription);
-    if (atsResultForFeedback?.feedback) {
-      const refined = await refineResumeContentWithATSFeedback(
-        contentToUse,
-        jobTitle,
-        jobDescription,
-        atsResultForFeedback.feedback
-      );
-      if (refined) contentToUse = refined;
-    }
-  }
-
-  contentToUse = mergeProfileExperienceAndEducation(contentToUse, profile);
-  contentToUse = mergeProfileBasicInfo(contentToUse, profile);
-
-  const hasJobContext = jobDescription.trim() !== "";
-  const shouldComputeAts = jobDescription.length >= 80;
-
-  // Compute final ATS score for the post-processed resume content.
-  // This keeps cached results consistent with what users would see when opening
-  // the resume later.
-  if (shouldComputeAts && contentToUse && Object.keys(contentToUse).length > 0) {
-    atsResultForCache = await computeATSScore(contentToUse, jobTitle, jobDescription);
-  }
-
-  const { id: insertedId, error: insertError } = await insertResumeForUserAndReturnId(supabase, {
+  const workflowResult = await runTailorResumeWorkflow({
     userId: user.id,
-    name,
-    template_id: templateId,
-    content: contentToUse,
-    initial_job_title: hasJobContext ? jobTitle.trim() || null : undefined,
-    initial_job_description: hasJobContext ? jobDescription.trim() || null : undefined,
+    jobTitle,
+    jobDescription,
+    baseResumeId,
+    profile,
   });
 
-  if (insertError || !insertedId) {
-    redirect("/resumes/tailor?error=" + encodeURIComponent(insertError?.message ?? "Insert failed"));
+  if (workflowResult.error) {
+    redirect("/resumes/tailor?error=" + encodeURIComponent(workflowResult.error));
   }
 
-  if (atsResultForCache && atsResultForCache.feedback) {
-    const jobHash = getAtsJobContextHash(jobTitle, jobDescription);
-    await updateResumeAtsResultForUser(supabase, {
-      userId: user.id,
-      resumeId: insertedId,
-      jobHash,
-      score: atsResultForCache.score,
-      feedback: atsResultForCache.feedback,
-      aspects: atsResultForCache.aspects ?? null,
-    });
-  }
-
+  const insertedId = workflowResult.insertedId;
   const applicationId = (formData.get("application_id") as string)?.trim();
   const resumeUrl = insertedId ? `/resumes/${insertedId}` : "/resumes";
   if (insertedId && applicationId) {

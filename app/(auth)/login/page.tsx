@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { Briefcase } from "lucide-react";
 import { LoginForm } from "./login-form";
 import { RegisteredToast } from "./registered-toast";
+import { requireGuest } from "@/lib/auth/guards";
 
 const REMEMBER_EMAIL_COOKIE = "remember_email";
 
@@ -12,6 +13,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ registered?: string; reset?: string }>;
 }) {
+  await requireGuest();
   const params = await searchParams;
   const cookieStore = await cookies();
   const rememberEmail = cookieStore.get(REMEMBER_EMAIL_COOKIE)?.value ?? "";

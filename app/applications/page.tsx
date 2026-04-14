@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
 import Link from "next/link";
 import { ApplicationRow } from "./application-row";
 import type { ApplicationRowItem } from "./application-row";
@@ -7,6 +7,7 @@ import { Plus } from "lucide-react";
 import type { ApplicationStatus } from "@/lib/types/database";
 import { ApplicationsFiltersBar } from "@/components/applications/ApplicationsFiltersBar";
 import { ApplicationsEmptyState } from "@/components/applications/ApplicationsEmptyState";
+import { fetchApplicationsPageForUser } from "@/lib/data/applications-search";
 
 const STATUSES: ApplicationStatus[] = [
   "saved",
@@ -26,7 +27,7 @@ export default async function ApplicationsPage({
   const { status: statusFilter, q: searchQ, page: pageParam } = await searchParams;
   const PAGE_SIZE = 10;
   const page = Math.max(1, Number(pageParam ?? 1));
-  const supabase = await createClient();
+  const user = await requireOnboardedUser();
 
   const from = (page - 1) * PAGE_SIZE;
 
@@ -34,23 +35,23 @@ export default async function ApplicationsPage({
     statusFilter && STATUSES.includes(statusFilter as ApplicationStatus) ? statusFilter : null;
   const qParam = searchQ && searchQ.trim() ? searchQ.trim() : null;
 
-  const [
-    { data: applications, error: applicationsError },
-    { data: totalCount, error: countError },
-  ] = await Promise.all([
-    supabase.rpc("search_applications", {
-      p_status: statusParam,
-      p_q: qParam,
-      p_page: page,
-      p_page_size: PAGE_SIZE,
-    }),
-    supabase.rpc("count_applications", {
-      p_status: statusParam,
-      p_q: qParam,
-    }),
-  ]);
+  let rpcError: { message: string } | null = null;
+  let totalCount = 0;
+  let applications: any[] = [];
+  try {
+    const result = await fetchApplicationsPageForUser({
+      userId: user.id,
+      status: statusParam as ApplicationStatus | null,
+      search: qParam,
+      page,
+      pageSize: PAGE_SIZE,
+    });
+    totalCount = result.total;
+    applications = result.rows;
+  } catch (error) {
+    rpcError = { message: error instanceof Error ? error.message : "Failed to load applications." };
+  }
 
-  const rpcError = applicationsError ?? countError;
   const list: ApplicationRowItem[] = (applications ?? []).map((a: any) => ({
     id: a.id,
     company: a.company,
@@ -59,15 +60,11 @@ export default async function ApplicationsPage({
     applied_at: a.applied_at ?? null,
     updated_at: a.updated_at,
     resume_id: a.resume_id ?? null,
-    // Supabase relationship selects as an array, even for a single related resume.
+    // Keep shape compatible with existing row renderer.
     resumes: a.resume_name ? [{ name: a.resume_name }] : null,
   }));
 
-  const total = rpcError
-    ? list.length
-    : typeof totalCount === "number"
-      ? totalCount
-      : Number(totalCount ?? 0);
+  const total = rpcError ? list.length : totalCount;
 
   function buildPageHref(nextPage: number) {
     const params = new URLSearchParams();

@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { Briefcase } from "lucide-react";
 import { ForgotPasswordForm } from "./forgot-password-form";
+import { requireGuest } from "@/lib/auth/guards";
 
 export const metadata = {
   title: "Forgot password — CareerKit",
   description: "Reset your CareerKit password.",
 };
 
-export default function ForgotPasswordPage() {
+export default async function ForgotPasswordPage() {
+  await requireGuest();
   return (
     <div className="w-full max-w-[400px] p-8 bg-white border border-slate-200 rounded-lg shadow-sm">
       <div className="flex flex-col items-center mb-6">

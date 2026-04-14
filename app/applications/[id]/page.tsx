@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { formatShortDate } from "@/lib/format-date";
@@ -7,6 +7,7 @@ import { ApplicationFormEnhancements } from "../application-form-enhancements";
 import { DeleteApplicationForm } from "./delete-application-form";
 import { ErrorBanner } from "@/components/error-banner";
 import type { ApplicationStatus } from "@/lib/types/database";
+import { query } from "@/lib/db";
 
 const STATUSES: ApplicationStatus[] = [
   "saved",
@@ -22,6 +23,17 @@ const inputClass =
   "w-full rounded-md border border-slate-300 text-sm focus:border-slate-500 focus:ring-1 focus:ring-slate-500 focus:outline-none";
 const labelClass = "block text-sm font-medium text-slate-700 mb-2";
 
+type ApplicationDetail = {
+  id: string;
+  company: string;
+  role: string;
+  status: ApplicationStatus;
+  applied_at: string | null;
+  notes: string | null;
+  resume_id: string | null;
+  job_url: string | null;
+};
+
 export default async function ApplicationDetailPage({
   params,
   searchParams,
@@ -31,48 +43,38 @@ export default async function ApplicationDetailPage({
 }) {
   const { id } = await params;
   const { error: errorParam, resume_id: resumeIdParam } = await searchParams;
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
   if (user && resumeIdParam?.trim()) {
     const resumeId = resumeIdParam.trim();
-    const { data: resume } = await supabase
-      .from("resumes")
-      .select("id")
-      .eq("id", resumeId)
-      .eq("user_id", user.id)
-      .single();
+    const resumes = await query<{ id: string }>("select id from resumes where id = $1 and user_id = $2 limit 1", [
+      resumeId,
+      user.id,
+    ]);
+    const resume = resumes[0];
     if (resume) {
-      const { error: updateError } = await supabase
-        .from("applications")
-        .update({ resume_id: resumeId })
-        .eq("id", id)
-        .eq("user_id", user.id);
+      let updateError: unknown = null;
+      try {
+        await query("update applications set resume_id = $1, updated_at = now() where id = $2 and user_id = $3", [
+          resumeId,
+          id,
+          user.id,
+        ]);
+      } catch (error) {
+        updateError = error;
+      }
       if (!updateError) {
         redirect(`/applications/${id}`);
       }
     }
   }
 
-  const [
-    { data: application },
-    { data: resumes },
-  ] = await Promise.all([
-    supabase
-      .from("applications")
-      .select("*")
-      .eq("id", id)
-      .eq("user_id", user.id)
-      .single(),
-    supabase
-      .from("resumes")
-      .select("id, name")
-      .eq("user_id", user.id)
-      .order("updated_at", { ascending: false }),
+  const [applications, resumes]: [ApplicationDetail[], Array<{ id: string; name: string }>] = await Promise.all([
+    query<ApplicationDetail>("select * from applications where id = $1 and user_id = $2 limit 1", [id, user.id]),
+    query<{ id: string; name: string }>("select id, name from resumes where user_id = $1 order by updated_at desc", [
+      user.id,
+    ]),
   ]);
+  const application = applications[0];
 
   if (!application) notFound();
 
@@ -190,7 +192,7 @@ export default async function ApplicationDetailPage({
               defaultValue={application.resume_id ?? ""}
             >
               <option value="">No resume linked</option>
-              {resumes?.map((r) => (
+              {resumes.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
                 </option>

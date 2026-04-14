@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
+import { query } from "@/lib/db";
 import { createApplication } from "@/lib/actions/applications";
 import Link from "next/link";
 import { ApplicationFormEnhancements } from "../application-form-enhancements";
@@ -24,11 +25,11 @@ export default async function NewApplicationPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
-  const supabase = await createClient();
-  const { data: resumes } = await supabase
-    .from("resumes")
-    .select("id, name")
-    .order("updated_at", { ascending: false });
+  const user = await requireOnboardedUser();
+  const resumes: Array<{ id: string; name: string }> = await query<{ id: string; name: string }>(
+    "select id, name from resumes where user_id = $1 order by updated_at desc",
+    [user.id]
+  );
 
   return (
     <>
@@ -105,7 +106,7 @@ export default async function NewApplicationPage({
             </label>
             <select id="resume_id" name="resume_id" className={inputClass}>
               <option value="">No resume linked</option>
-              {resumes?.map((r) => (
+              {resumes.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
                 </option>

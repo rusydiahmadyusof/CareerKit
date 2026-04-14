@@ -1,6 +1,6 @@
 /**
- * Types for Supabase tables (resumes, applications).
- * Keep in sync with supabase/migrations/*.sql
+ * Database table types.
+ * Keep in sync with migration SQL files.
  */
 
 export type ApplicationStatus =

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth/session";
 import { Briefcase, FileText, LayoutGrid, BarChart3 } from "lucide-react";
 import { Public_Sans } from "next/font/google";
 
@@ -18,10 +18,7 @@ export default async function HomePage({
 }: {
   searchParams: Promise<{ deleted?: string; reset?: string }>;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   const params = await searchParams;
   const showDeleted = params.deleted === "1";
   const showReset = params.reset === "1";

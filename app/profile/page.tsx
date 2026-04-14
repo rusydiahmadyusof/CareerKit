@@ -1,13 +1,10 @@
 import { getProfile } from "@/lib/actions/profile";
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
 import { ProfileForm } from "@/components/profile-form";
 import { DeleteAccountForm } from "./delete-account-form";
 
 export default async function ProfilePage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await requireOnboardedUser();
   const profile = await getProfile();
 
   return (

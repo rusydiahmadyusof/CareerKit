@@ -1,8 +1,8 @@
-import { createClient } from "@/lib/supabase/server";
+import { requireOnboardedUser } from "@/lib/auth/guards";
+import { query } from "@/lib/db";
 import { Suspense } from "react";
 import Link from "next/link";
 import { formatTimeAgo } from "@/lib/format-date";
-import { redirect } from "next/navigation";
 import { AuthSuccessBanner } from "./auth-success-banner";
 import { ErrorBanner } from "@/components/error-banner";
 import { DashboardSummaryCards } from "@/components/dashboard/DashboardSummaryCards";
@@ -21,12 +21,7 @@ import type { Resume, Application } from "@/lib/types/database";
 const ACTIVE_APPLICATION_STATUSES = ["applied", "screening", "interviewing"] as const;
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const user = await requireOnboardedUser();
 
   let resumeCount = 0;
   let activeApplicationCount = 0;
@@ -37,47 +32,35 @@ export default async function DashboardPage() {
 
   try {
     const [
-      resumesCountRes,
-      activeCountRes,
-      interviewCountRes,
-      recentResumesRes,
-      recentApplicationsRes,
+      resumeCountRows,
+      activeCountRows,
+      interviewCountRows,
+      recentResumeRows,
+      recentApplicationRows,
     ] = await Promise.all([
-      supabase.from("resumes").select("*", { count: "exact", head: true }).eq("user_id", user.id),
-      supabase
-        .from("applications")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .in("status", ACTIVE_APPLICATION_STATUSES),
-      supabase
-        .from("applications")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("status", "interviewing"),
-      supabase
-        .from("resumes")
-        .select("id, name, updated_at")
-        .eq("user_id", user.id)
-        .order("updated_at", { ascending: false })
-        .limit(5),
-      supabase
-        .from("applications")
-        .select("id, company, role, status, updated_at")
-        .eq("user_id", user.id)
-        .order("updated_at", { ascending: false })
-        .limit(5),
+      query<{ count: string }>("select count(*)::text as count from resumes where user_id = $1", [user.id]),
+      query<{ count: string }>(
+        "select count(*)::text as count from applications where user_id = $1 and status = any($2::text[])",
+        [user.id, ACTIVE_APPLICATION_STATUSES]
+      ),
+      query<{ count: string }>(
+        "select count(*)::text as count from applications where user_id = $1 and status = 'interviewing'",
+        [user.id]
+      ),
+      query<Pick<Resume, "id" | "name" | "updated_at">>(
+        "select id, name, updated_at from resumes where user_id = $1 order by updated_at desc limit 5",
+        [user.id]
+      ),
+      query<Pick<Application, "id" | "company" | "role" | "status" | "updated_at">>(
+        "select id, company, role, status, updated_at from applications where user_id = $1 order by updated_at desc limit 5",
+        [user.id]
+      ),
     ]);
-
-    if (!resumesCountRes.error) resumeCount = resumesCountRes.count ?? 0;
-    else dataError = resumesCountRes.error.message;
-    if (!activeCountRes.error) activeApplicationCount = activeCountRes.count ?? 0;
-    else dataError = dataError ?? activeCountRes.error.message;
-    if (!interviewCountRes.error) interviewCount = interviewCountRes.count ?? 0;
-    else dataError = dataError ?? interviewCountRes.error.message;
-    if (!recentResumesRes.error) recentResumes = recentResumesRes.data ?? [];
-    else dataError = dataError ?? recentResumesRes.error.message;
-    if (!recentApplicationsRes.error) recentApplications = recentApplicationsRes.data ?? [];
-    else dataError = dataError ?? recentApplicationsRes.error.message;
+    resumeCount = Number(resumeCountRows[0]?.count ?? 0);
+    activeApplicationCount = Number(activeCountRows[0]?.count ?? 0);
+    interviewCount = Number(interviewCountRows[0]?.count ?? 0);
+    recentResumes = recentResumeRows;
+    recentApplications = recentApplicationRows;
   } catch (err) {
     dataError = err instanceof Error ? err.message : "Failed to load dashboard";
   }

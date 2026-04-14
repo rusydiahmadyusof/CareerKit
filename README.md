@@ -8,14 +8,14 @@ Build resumes and track job applications in one place.
 ## Stack
 
 - **Next.js 15** (App Router), **TypeScript**, **Tailwind CSS**
-- **Supabase** (Auth, Postgres) — configure via env
+- **Neon Postgres** (database) + app-managed auth/session tables
 
 ## Run locally
 
 1. Copy env:
-   - Windows (PowerShell): `Copy-Item .env.example .env`
-   - macOS/Linux: `cp .env.example .env`
-2. Fill in Supabase values in `.env` (from [Supabase dashboard](https://supabase.com/dashboard)).
+   - Windows (PowerShell): `Copy-Item .env.example .env.local`
+   - macOS/Linux: `cp .env.example .env.local`
+2. Fill in database and auth values in `.env.local`.
 3. Install and run:
 
 ```bash
@@ -25,31 +25,37 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Supabase setup (migrations)
+## Neon setup (migrations)
 
-For a fresh Supabase database, run the combined SQL once from `supabase/migrations/`:
+For a fresh Neon database, run SQL files from `supabase/migrations/` in this order:
 
-1. `careerkit_fresh.sql`
+1. `20260414000001_neon_auth.sql`
+2. `careerkit_fresh.sql`
 
-Use either the Supabase Dashboard SQL editor or your Supabase CLI workflow.
+You can run these via `psql` or Neon SQL editor, then validate:
+
+```bash
+npm run verify:neon-bootstrap
+```
 
 ## Env vars
 
 | Variable                        | Required | Description                                              |
 | ------------------------------- | -------- | -------------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Yes      | Supabase project URL                                     |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes      | Supabase anon/public key                                 |
+| `DATABASE_URL`                  | Yes      | Neon Postgres connection string                          |
 | `GROQ_API_KEY`                  | No       | For tailor-to-job and ATS scoring (AI). Prefer Groq.      |
 | `OPENAI_API_KEY`                | No       | Alternative for tailor/ATS if Groq is not set.           |
-| `SUPABASE_SERVICE_ROLE_KEY`     | No       | Needed for account deletion (server-side auth delete).   |
 
-## Password reset (forgot password)
+## Password reset
 
-In the [Supabase Dashboard](https://supabase.com/dashboard) → Authentication → URL Configuration, add your app URL to **Redirect URLs** (e.g. `https://yourapp.com/reset-password` and `http://localhost:3000/reset-password` for local testing). Otherwise the email reset link will not open your app.
+Password reset is token-based via `password_reset_tokens`. By default, reset links are returned directly in the forgot-password response for manual delivery during early rollout.
 
 ## Deploy
 
 Connect this repo to [Vercel](https://vercel.com); set the env vars in the project settings. Deploys on push to `main`.
+
+For production cutover and rollback steps, see `NEON_MIGRATION.md`.
+For runtime health and incident handling, see `OPERATIONS_RUNBOOK.md`.
 
 ## Docs
 
